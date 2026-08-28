@@ -7,9 +7,9 @@
   },
   {
     "method":"conformal 80% [coldstart]",
-    "picp":0.8261758691,
-    "median_width_m":9.9916554665,
-    "median_width_ratio":3.3090821465
+    "picp":0.8200408998,
+    "median_width_m":9.91523721,
+    "median_width_ratio":3.2304306329
   },
   {
     "method":"LGBM quantile [update]",
@@ -19,8 +19,8 @@
   },
   {
     "method":"conformal 80% [update]",
-    "picp":0.839127471,
-    "median_width_m":6.4595190734,
-    "median_width_ratio":2.2638722227
+    "picp":0.8418541241,
+    "median_width_m":6.4631011315,
+    "median_width_ratio":2.2365567351
   }
 ]

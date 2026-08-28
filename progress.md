@@ -4,7 +4,7 @@ Living record of this project: the plan, every decision and why, and what has
 actually been built. **Updated at the start of every working session and before
 every commit or push.**
 
-Last updated: 2026-08-28 · Optuna pass running; tuning now checkpointed
+Last updated: 2026-08-28 · after the Optuna pass (P3 complete)
 
 ---
 
@@ -15,7 +15,7 @@ Last updated: 2026-08-28 · Optuna pass running; tuning now checkpointed
 | **P0** | Kill-risk spike — prove the FBref ↔ Transfermarkt join | ✅ Complete |
 | **P1** | Data platform — feature matrix, panel, leakage gates | ✅ Complete |
 | **P2** | First models — baselines + GBM, temporal eval | ✅ Complete |
-| **P3** | Model zoo — full tier list, quantiles, ensemble | ✅ Untuned zoo evaluated · Optuna pass outstanding |
+| **P3** | Model zoo — full tier list, quantiles, ensemble, tuning | ✅ Complete |
 | **P4** | Explain & compare — SHAP, similarity, residual leaderboard | ⬜ Not started |
 | **P5** | Research — forward backtest, model card, writeup | ⬜ Not started |
 
@@ -289,10 +289,10 @@ also fixed a stacker round-trip test that was tripping on the clipping boundary.
 
 ---
 
-## P3 — model zoo ✅ (untuned)
+## P3 — model zoo ✅
 
-Rolling-origin CV, 4 folds, on the repaired panel. Hyperparameters are library defaults;
-the Optuna pass is still outstanding.
+Rolling-origin CV, 4 folds, on the repaired panel. Figures below are **post-tuning**;
+the tuning changed almost nothing, which is itself the finding — see below.
 
 ### Built
 
@@ -344,6 +344,28 @@ players quite like leaving last year's number alone.
 **Ridge and ElasticNet look better than they are.** Competitive log MAE (0.453) but
 MAE €10.1m — being linear in log space, they blow up multiplicatively on the expensive
 tail. Useful as an interpretable floor, not as a predictor.
+
+### The Optuna pass bought nothing — and that is the result
+
+5.7 hours of compute across 10 tuning jobs (LightGBM ~19/29 min per variant, XGBoost
+~24/29, CatBoost ~51/47 even on a reduced budget, HistGBM ~24/19, EBM ~11/10).
+
+| | log MAE gain |
+|---|---|
+| Mean gain across 20 models | **+0.0017** |
+| Best single gain (XGBoost cold-start) | **+0.0094** |
+| Mean fold-to-fold standard deviation | **0.060** |
+
+The largest improvement is **11% of one standard deviation**. Every other gain is
+smaller still, and three models got marginally worse. Tuned hyperparameters are kept
+(`data/processed/p3_best_params.json`) because they cost nothing to carry, but no
+conclusion in this project rests on them.
+
+**This confirms the prediction made before the pass ran: the data is the binding
+constraint, not the hyperparameters.** With 8,247 rows over 3,060 players and a label
+that is itself a crowd-sourced estimate, the ceiling is set by the panel. The practical
+implication for P4/P5 is to stop buying accuracy and start buying *explanation* —
+more compute on this model family is wasted effort.
 
 ### Interval calibration — nominal 80%
 
