@@ -1,12 +1,14 @@
 {
   "rows_full": 15522,
-  "rows_model": 5684,
-  "unique_players": 2415,
+  "rows_model": 5855,
+  "unique_players": 2450,
   "seasons": [
     2018,
     2019,
     2020,
-    2021
+    2021,
+    2022,
+    2023
   ],
   "n_features_coldstart": 177,
   "n_features_update": 180,

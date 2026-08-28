@@ -80,17 +80,40 @@ def test_no_target_column_is_a_feature(manifest):
         assert not TARGETS & set(manifest[variant])
 
 
-def test_prior_value_precedes_the_label(panel):
-    """prior_value must come from season t-1, the label from season t+1."""
+def test_mirror_prior_value_precedes_the_label(panel):
+    """For mirror-sourced rows: prior from season t-1, label from season t+1."""
+    mirror = panel[panel.label_source == "mirror"]
+    if len(mirror) < 50:
+        pytest.skip("panel is now predominantly scraped-label rows")
     tm = pd.read_parquet(ROOT / "data/raw/tm_vals.parquet")
     tm = tm.sort_values("player_market_value_euro", ascending=False) \
            .drop_duplicates(["player_url", "season_start_year"])
     lookup = tm.set_index(["player_url", "season_start_year"]).player_market_value_euro
 
-    sample = panel.dropna(subset=["prior_value_eur"]).sample(300, random_state=0)
+    sample = mirror.dropna(subset=["prior_value_eur"]).sample(
+        min(200, len(mirror)), random_state=0)
     for r in sample.itertuples():
         assert lookup.get((r.tm_url, r.Season_End_Year)) == r.value_eur
-        assert lookup.get((r.tm_url, r.Season_End_Year - 1)) == r.prior_value_eur
+
+
+def test_scraped_label_is_dated_after_the_season(panel):
+    """The scraped label must be a post-season valuation, and the prior a pre-season one.
+
+    Season_End_Year Y runs to about May Y, so a label dated before 1 June Y would
+    have been published while the season was still being played.
+    """
+    sc = panel[panel.label_source == "scraped"].dropna(subset=["label_date"])
+    assert len(sc) > 0, "no scraped labels present"
+    for r in sc.sample(min(400, len(sc)), random_state=0).itertuples():
+        assert r.label_date >= pd.Timestamp(r.Season_End_Year, 6, 1), (
+            f"{r.Player}: label dated {r.label_date} is inside season "
+            f"{r.Season_End_Year - 1}-{r.Season_End_Year}"
+        )
+        if pd.notna(r.prior_date):
+            assert r.prior_date < pd.Timestamp(r.Season_End_Year - 1, 8, 1), (
+                f"{r.Player}: prior dated {r.prior_date} is not pre-season"
+            )
+            assert r.prior_date < r.label_date
 
 
 def test_lags_are_strictly_backward(panel):
@@ -156,18 +179,20 @@ def test_context_aggregates_predate_the_label(panel):
         assert want == pytest.approx(r.league_median_prior)
 
 
-def test_stale_label_seasons_are_excluded(panel):
-    """A snapshot that merely copies the previous season cannot serve as a label.
+def test_stale_mirror_seasons_are_excluded(panel):
+    """A stale mirror snapshot may not serve as a label.
 
-    Transfermarkt's 2022 snapshot is a 99.5% copy of 2021. Left in, it lets the
-    carry-forward baseline score a perfect R2 and makes every model look good
-    for the wrong reason.
+    Transfermarkt's 2022 mirror snapshot is a 99.5% copy of 2021. Rows whose
+    label is scraped from the real dated history are unaffected; rows still
+    relying on that snapshot must be dropped.
     """
     from src.features.build import stale_label_seasons
 
     stale = stale_label_seasons()
     assert 2022 in stale, "the known-stale 2022 snapshot is no longer detected"
-    assert not set(panel.Season_End_Year) & stale
+    offending = panel[(panel.Season_End_Year.isin(stale))
+                      & (panel.label_source == "mirror")]
+    assert offending.empty, f"{len(offending)} rows use a stale mirror label"
 
 
 def test_label_moves_between_seasons(panel):

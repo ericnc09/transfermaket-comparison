@@ -9,3 +9,6 @@ data/raw/*.parquet
 data/interim/*.parquet
 data/processed/*.parquet
 data/processed/*.duckdb
+
+# CatBoost writes training logs to CWD
+catboost_info/

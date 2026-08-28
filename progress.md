@@ -4,7 +4,7 @@ Living record of this project: the plan, every decision and why, and what has
 actually been built. **Updated at the start of every working session and before
 every commit or push.**
 
-Last updated: 2026-08-28 · after P2 (first models)
+Last updated: 2026-08-28 · P3 scaffolding built, data repair in flight
 
 ---
 
@@ -15,7 +15,7 @@ Last updated: 2026-08-28 · after P2 (first models)
 | **P0** | Kill-risk spike — prove the FBref ↔ Transfermarkt join | ✅ Complete |
 | **P1** | Data platform — feature matrix, panel, leakage gates | ✅ Complete |
 | **P2** | First models — baselines + GBM, temporal eval | ✅ Complete |
-| **P3** | Model zoo — full tier list, Optuna, quantiles, ensemble | ▶ Next |
+| **P3** | Model zoo — full tier list, Optuna, quantiles, ensemble | ▶ Scaffolding built, awaiting repaired panel |
 | **P4** | Explain & compare — SHAP, similarity, residual leaderboard | ⬜ Not started |
 | **P5** | Research — forward backtest, model card, writeup | ⬜ Not started |
 
@@ -65,6 +65,12 @@ fees are demoted to an optional P5 validation set.
 | Question | Answer |
 |---|---|
 | Six clean seasons, or eight with two feature eras? | **Six clean seasons, one consistent feature matrix.** When the point is comparing model behaviour against Transfermarkt, a stable feature set beats recency. |
+
+### Round 4 — after the stale-label repair
+
+| Question | Answer | Consequence |
+|---|---|---|
+| Panel unit, now that real dated valuations restore the ~3×/year cadence? | **One row per player-season** | Trailing-window features and every existing test stay valid. The scraped history is used to pick one precise post-season label rather than to multiply rows. Avoids ~25,000 heavily autocorrelated rows over 2,415 players. |
 
 ### Two model variants
 
@@ -242,6 +248,57 @@ hardcoded year, so a future stale snapshot is caught automatically.
 the training window is now two seasons, which makes every `lag2` feature entirely null
 in training. A variance guard drops degenerate columns at fit time rather than
 hardcoding the exclusion.
+
+---
+
+## P3 — model zoo ▶
+
+Scaffolding complete and contract-tested; final numbers wait on the repaired panel.
+
+### Built
+
+| Component | File | Purpose |
+|---|---|---|
+| Ridge / ElasticNet + age splines | `src/models/linear.py` | Interpretable floor. Age enters via a natural spline basis, not a raw term. |
+| Explainable Boosting Machine | `src/models/ebm.py` | Near-GBM accuracy with a readable shape function per feature — the age curve comes straight off the model. |
+| Quantile trio (p10/p50/p90) | `src/models/quantile.py` | LightGBM quantile objective, with monotonicity enforced against quantile crossing. |
+| Split-conformal wrapper | `src/models/quantile.py` | Distribution-free coverage around any point model. Calibrated on a **player-disjoint** slice; residuals taken in log space so the euro band is multiplicative. |
+| Stacked ensemble | `src/models/ensemble.py` | Ridge meta-learner over player-grouped out-of-fold base predictions. |
+| Optuna harness | `src/models/tuning.py` | Search spaces for all five families; objective is mean log MAE over player-grouped CV. |
+| Orchestrator | `scripts/06_tune_and_evaluate.py` | Tune → rolling-origin evaluate → interval calibration. |
+| Contract tests | `tests/test_models.py` | Units, interval ordering, conformal coverage, no-future-leakage in the fold generator. |
+
+### Smoke-test findings (4-season panel, pre-repair)
+
+| Model | log MAE | Note |
+|---|---|---|
+| LGBM-quantile [coldstart] | 0.450 | Best point estimate, but see coverage below |
+| Conformal(LightGBM) | 0.457 | **PICP 0.810** against a nominal 0.80 |
+| CatBoost [coldstart] | 0.458 | |
+| Stacked | 0.463 | |
+| EBM [coldstart] | 0.490 | Competitive *and* interpretable |
+| Ridge + splines | 0.550 | The interpretable floor |
+| ElasticNet + splines | 0.554 | |
+
+Two results worth carrying forward:
+
+**Conformal beats raw quantile regression on calibration, decisively.** LightGBM's
+quantile objective delivered **PICP 0.622** against a nominal 0.80 — badly
+under-covering, so its "p10–p90" band would have been a lie. Split conformal landed at
+**0.810**. Conformal is the interval method.
+
+**EBM is competitive with the boosters** (0.490 vs 0.458–0.465) while giving a
+per-feature shape function. For a project whose output is an argument about *why*
+a player is mispriced, that trade is worth making.
+
+### A bug found and fixed
+
+The stacker initially scored **0.614** — worse than every one of its components, which
+is close to impossible for a ridge meta-learner and so was a bug rather than a result.
+Base predictions were being fed in as `log1p(euros)` while the meta-learner's target
+was `log1p(value / league_median_prior)`, so the ridge had to absorb a per-row deflator
+it could not see. With both sides in the same space it scores **0.463**, between its
+components as expected. `test_stacker_target_space_roundtrip` now pins the conversion.
 
 ---
 

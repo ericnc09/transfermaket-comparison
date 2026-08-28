@@ -68,3 +68,55 @@ class CatBoost:
 
     def predict(self, df: pd.DataFrame) -> np.ndarray:
         return _reinflate(self.m_.predict(self._frame(df)), df)
+
+
+class LightGBM:
+    """LightGBM - now usable via scripts/00_setup_openmp.py."""
+
+    def __init__(self, variant: str = "coldstart", **kw):
+        self.variant = variant
+        self.name = f"LightGBM [{variant}]"
+        self.kw = dict(n_estimators=2000, learning_rate=0.04, num_leaves=31,
+                       min_child_samples=20, subsample=0.8, subsample_freq=1,
+                       colsample_bytree=0.8, reg_lambda=1.0,
+                       random_state=0, verbose=-1) | kw
+
+    def fit(self, train: pd.DataFrame, valid: pd.DataFrame | None = None):
+        import lightgbm as lgb
+        self.feats_ = feature_columns(train, self.variant, require_variance=True)
+        self.m_ = lgb.LGBMRegressor(**self.kw)
+        cb = [lgb.early_stopping(100, verbose=False)] if valid is not None else None
+        self.m_.fit(train[self.feats_], train[TARGET],
+                    eval_set=[(valid[self.feats_], valid[TARGET])] if valid is not None else None,
+                    callbacks=cb)
+        return self
+
+    def predict(self, df: pd.DataFrame) -> np.ndarray:
+        return _reinflate(self.m_.predict(df[self.feats_]), df)
+
+
+class XGBoost:
+    """XGBoost - now usable via scripts/00_setup_openmp.py."""
+
+    def __init__(self, variant: str = "coldstart", **kw):
+        self.variant = variant
+        self.name = f"XGBoost [{variant}]"
+        self.kw = dict(n_estimators=2000, learning_rate=0.04, max_depth=6,
+                       min_child_weight=5, subsample=0.8, colsample_bytree=0.8,
+                       reg_lambda=1.0, random_state=0,
+                       early_stopping_rounds=100) | kw
+
+    def fit(self, train: pd.DataFrame, valid: pd.DataFrame | None = None):
+        import xgboost as xgb
+        self.feats_ = feature_columns(train, self.variant, require_variance=True)
+        kw = dict(self.kw)
+        if valid is None:
+            kw.pop("early_stopping_rounds", None)
+        self.m_ = xgb.XGBRegressor(**kw)
+        self.m_.fit(train[self.feats_], train[TARGET],
+                    eval_set=[(valid[self.feats_], valid[TARGET])] if valid is not None else None,
+                    verbose=False)
+        return self
+
+    def predict(self, df: pd.DataFrame) -> np.ndarray:
+        return _reinflate(self.m_.predict(df[self.feats_]), df)

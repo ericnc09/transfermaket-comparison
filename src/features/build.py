@@ -12,6 +12,7 @@ import pandas as pd
 
 from src.entity.resolve import COMP_MAP
 from src.features.definitions import COUNTS, POSITION_MAP, RENAME, VOLUME, WEIGHTED
+from src.features.labels import attach_real_labels
 
 ROOT = Path(__file__).resolve().parents[2]
 RAW = ROOT / "data" / "raw"
@@ -262,12 +263,17 @@ def add_lags(df: pd.DataFrame) -> pd.DataFrame:
 def build_panel() -> pd.DataFrame:
     df = derive_rates(aggregate_player_season(load_fbref_wide()))
     df = attach_transfermarkt(df)
+    # Scraped, dated valuations supersede the mirror's season snapshots where
+    # available - they repair the stale 2022 snapshot and add 2022-23.
+    df = attach_real_labels(df, list(SEASONS))
     df = add_context(df)
     df = add_lags(df)
     df = df.copy()
     df["pos_group"] = df.player_position.map(POSITION_MAP)
+    # A stale mirror snapshot is only a problem for rows still sourced from it.
     stale = stale_label_seasons()
-    df["label_is_stale"] = df.Season_End_Year.isin(stale)
+    df["label_is_stale"] = (df.Season_End_Year.isin(stale)
+                            & (df.get("label_source", "mirror") == "mirror"))
     df["eligible"] = (
         (df.minutes >= MIN_MINUTES)
         & (df.primary_pos != "GK")
