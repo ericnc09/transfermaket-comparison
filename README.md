@@ -3,16 +3,39 @@
 Machine-learning transfer value predictor for Big 5 outfield footballers — trained to
 reproduce Transfermarkt market values, and to surface where it disagrees with them.
 
-**Status: P1 (data platform) complete.** Panel built and gated; no model trained yet.
+**Status: P2 (first models) complete.** Baselines and gradient boosting evaluated on a held-out season.
+See [progress.md](progress.md) for the full record.
+
+## P2 result — first leaderboard
+
+Held-out 2020-21 season. Train 2017-18→2018-19, validate 2019-20.
+
+| Model | log MAE | log R² | MedAE €m | ±30% |
+|---|---|---|---|---|
+| **CatBoost [update]** | **0.323** | 0.882 | 1.60 | 57.6% |
+| *carry forward prior TM value* | *0.384* | *0.832* | *2.00* | *45.1%* |
+| **CatBoost [coldstart]** | 0.488 | 0.741 | 2.78 | 38.0% |
+| log-linear (age, minutes, G+A) | 0.735 | 0.470 | 4.12 | 23.5% |
+| global median | 1.026 | −0.000 | 5.40 | 17.5% |
+
+The `update` model beats carry-forward by 16% on log MAE — **that gap is the
+contribution**, not the R² of 0.88, which the baseline nearly matches alone. The
+`coldstart` model reaching R² 0.741 without ever seeing a Transfermarkt value is the
+more meaningful result.
+
+Two defects were found and fixed during P2: aggregate leakage in the squad/league
+context features, and a stale 2021-22 Transfermarkt label snapshot that is a 99.5%
+copy of the prior season. Both are now gated by tests. Details in
+[progress.md](progress.md).
 
 ## P1 result — the modelling panel
 
 | | |
 |---|---|
-| Panel rows (eligible + labelled) | **7,077** |
-| Unique players | **2,688** |
+| Panel rows (eligible + labelled) | **5,684** |
+| Unique players | **2,415** |
 | Features | 177 cold-start / 180 update |
-| Seasons | 2017-18 → 2021-22 (five label-able) |
+| Seasons | 2017-18 → 2020-21 (four label-able) |
 | Leagues | Big 5, 1,300–1,480 rows each |
 | Store | `data/processed/market.duckdb` + parquet |
 
@@ -110,6 +133,7 @@ python -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 ./.venv/bin/python scripts/02_p0_panel.py    # P0: resolve + signal check
 ./.venv/bin/python scripts/03_p0_report.py   # P0: spot-check + figure
 ./.venv/bin/python scripts/03_build_panel.py # P1: full panel -> duckdb
+./.venv/bin/python scripts/04_train.py       # P2: baselines + GBM leaderboard
 ./.venv/bin/python -m pytest tests/ -q       # match-rate + leakage gates
 ```
 
@@ -121,6 +145,8 @@ src/entity/resolve.py        the join (name normalisation, club crosswalk, casca
 src/features/definitions.py  declarative feature spec (61 counting stats)
 src/features/build.py        merge, aggregate, rate, attach, lag, deflate
 src/features/manifest.py     which columns are features, per variant
+src/eval/{splits,metrics}.py temporal splits, scoring, segment breakdowns
+src/models/{baselines,gbm}.py tier 0 baselines, CatBoost + HistGBM
 scripts/                     numbered pipeline stages
 tests/                       match-rate gate, leakage gates, unit tests
 data/{raw,interim,processed}/

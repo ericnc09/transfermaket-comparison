@@ -121,3 +121,59 @@ def test_discontinued_stats_absent_only_outside_training(manifest):
     for col in ("pressures_p90", "prog_carries_p90"):
         in_train = full[full.Season_End_Year.isin(labelled_seasons) & full.eligible]
         assert in_train[col].notna().mean() > 0.95
+
+
+def test_context_aggregates_predate_the_label(panel):
+    """Squad and league aggregates must come from the snapshot BEFORE season t.
+
+    Built on the contemporaneous snapshot they would contain the player's own
+    label. Correlation checks miss this: the leak is diluted across a whole
+    squad, so it shows up as r≈0.03 rather than r≈1.
+    """
+    tm = pd.read_parquet(ROOT / "data/raw/tm_vals.parquet")
+    tm = tm.sort_values("player_market_value_euro", ascending=False) \
+           .drop_duplicates(["player_url", "season_start_year"])
+    tm = tm[tm.player_market_value_euro.notna()]
+
+    squad_tot = tm.groupby(["squad", "season_start_year"]).player_market_value_euro.sum()
+    league_med = tm.groupby(["comp_name", "season_start_year"]).player_market_value_euro.median()
+
+    sample = panel.dropna(subset=["squad_value_prior"]).sample(200, random_state=0)
+    for r in sample.itertuples():
+        prior = squad_tot.get((r.tm_squad, r.Season_End_Year - 1))
+        assert prior == pytest.approx(r.squad_value_prior), (
+            f"{r.Player}: squad_value_prior is not the season-{r.Season_End_Year - 1} total"
+        )
+        # And it must NOT equal the contemporaneous total.
+        same = squad_tot.get((r.tm_squad, r.Season_End_Year))
+        if same is not None and same != prior:
+            assert r.squad_value_prior != same
+
+    comp_map = {"Premier League": "Premier League", "La Liga": "LaLiga",
+                "Serie A": "Serie A", "Bundesliga": "Bundesliga", "Ligue 1": "Ligue 1"}
+    for r in panel.sample(100, random_state=1).itertuples():
+        want = league_med.get((comp_map[r.Comp], r.Season_End_Year - 1))
+        assert want == pytest.approx(r.league_median_prior)
+
+
+def test_stale_label_seasons_are_excluded(panel):
+    """A snapshot that merely copies the previous season cannot serve as a label.
+
+    Transfermarkt's 2022 snapshot is a 99.5% copy of 2021. Left in, it lets the
+    carry-forward baseline score a perfect R2 and makes every model look good
+    for the wrong reason.
+    """
+    from src.features.build import stale_label_seasons
+
+    stale = stale_label_seasons()
+    assert 2022 in stale, "the known-stale 2022 snapshot is no longer detected"
+    assert not set(panel.Season_End_Year) & stale
+
+
+def test_label_moves_between_seasons(panel):
+    """Sanity floor: labels must actually differ from the prior valuation."""
+    moved = (panel.prior_value_eur != panel.value_eur).mean()
+    assert moved > 0.5, (
+        f"only {moved:.1%} of labels differ from their prior value - "
+        "the label snapshot is probably stale"
+    )

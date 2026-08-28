@@ -1,0 +1,98 @@
+[
+  {
+    "model":"HistGBM [update]",
+    "log_rmse":0.4232052211,
+    "log_mae":0.3225232276,
+    "log_r2":0.8813231989,
+    "mae_m":3.6527457957,
+    "medae_m":1.6457268926,
+    "smape":0.3120843694,
+    "within_30pct":0.581920904,
+    "spearman":0.937569184,
+    "ndcg_100":0.9341833039
+  },
+  {
+    "model":"CatBoost [update]",
+    "log_rmse":0.4220788055,
+    "log_mae":0.3228110644,
+    "log_r2":0.8819541055,
+    "mae_m":3.6160177928,
+    "medae_m":1.6009470788,
+    "smape":0.312523267,
+    "within_30pct":0.5762711864,
+    "spearman":0.9396087327,
+    "ndcg_100":0.9390403561
+  },
+  {
+    "model":"carry forward prior TM value",
+    "log_rmse":0.5032897311,
+    "log_mae":0.38382221,
+    "log_r2":0.8321582743,
+    "mae_m":4.2122881356,
+    "medae_m":2.0,
+    "smape":0.3672828128,
+    "within_30pct":0.4505649718,
+    "spearman":0.9204023024,
+    "ndcg_100":0.9249438064
+  },
+  {
+    "model":"CatBoost [coldstart]",
+    "log_rmse":0.6250049727,
+    "log_mae":0.4876928315,
+    "log_r2":0.7411603863,
+    "mae_m":5.458003596,
+    "medae_m":2.7784246356,
+    "smape":0.4582198723,
+    "within_30pct":0.3799435028,
+    "spearman":0.8690084309,
+    "ndcg_100":0.8644363173
+  },
+  {
+    "model":"HistGBM [coldstart]",
+    "log_rmse":0.6163133972,
+    "log_mae":0.4881792686,
+    "log_r2":0.7483093894,
+    "mae_m":5.5891621203,
+    "medae_m":2.5292384481,
+    "smape":0.4604109384,
+    "within_30pct":0.3848870056,
+    "spearman":0.8629084442,
+    "ndcg_100":0.8386495276
+  },
+  {
+    "model":"log-linear (age, minutes, G+A)",
+    "log_rmse":0.8940157988,
+    "log_mae":0.7353337579,
+    "log_r2":0.4703924291,
+    "mae_m":8.3395945961,
+    "medae_m":4.1205295011,
+    "smape":0.6636455581,
+    "within_30pct":0.2351694915,
+    "spearman":0.6660530484,
+    "ndcg_100":0.690484397
+  },
+  {
+    "model":"median by position x age",
+    "log_rmse":1.0799569875,
+    "log_mae":0.8876287311,
+    "log_r2":0.2271829141,
+    "mae_m":10.0842161017,
+    "medae_m":5.2,
+    "smape":0.7709050203,
+    "within_30pct":0.188559322,
+    "spearman":0.4349256478,
+    "ndcg_100":0.2863064853
+  },
+  {
+    "model":"global median",
+    "log_rmse":1.2287567372,
+    "log_mae":1.0255275037,
+    "log_r2":-0.0004505372,
+    "mae_m":10.7193502825,
+    "medae_m":5.4,
+    "smape":0.8657286867,
+    "within_30pct":0.1751412429,
+    "spearman":null,
+    "ndcg_100":0.160823425
+  }
+]

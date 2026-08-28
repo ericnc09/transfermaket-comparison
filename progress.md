@@ -4,7 +4,7 @@ Living record of this project: the plan, every decision and why, and what has
 actually been built. **Updated at the start of every working session and before
 every commit or push.**
 
-Last updated: 2026-08-28 · after P1 (data platform)
+Last updated: 2026-08-28 · after P2 (first models)
 
 ---
 
@@ -14,8 +14,8 @@ Last updated: 2026-08-28 · after P1 (data platform)
 |---|---|---|
 | **P0** | Kill-risk spike — prove the FBref ↔ Transfermarkt join | ✅ Complete |
 | **P1** | Data platform — feature matrix, panel, leakage gates | ✅ Complete |
-| **P2** | First models — baselines + LightGBM, temporal eval | ▶ In progress |
-| **P3** | Model zoo — full tier list, Optuna, quantiles, ensemble | ⬜ Not started |
+| **P2** | First models — baselines + GBM, temporal eval | ✅ Complete |
+| **P3** | Model zoo — full tier list, Optuna, quantiles, ensemble | ▶ Next |
 | **P4** | Explain & compare — SHAP, similarity, residual leaderboard | ⬜ Not started |
 | **P5** | Research — forward backtest, model card, writeup | ⬜ Not started |
 
@@ -124,12 +124,15 @@ minutes **ρ=+0.301**. Median value rose €12.0m → €20.0m across five seaso
 
 | | |
 |---|---|
-| Rows (eligible + labelled) | **7,077** |
-| Unique players | **2,688** |
+| Rows (eligible + labelled) | **5,684** |
+| Unique players | **2,415** |
 | Features | 177 cold-start / 180 update |
-| Seasons | 2017-18 → 2021-22 (five label-able) |
-| Leagues | Big 5, 1,300–1,480 rows each |
+| Seasons | 2017-18 → 2020-21 (four label-able) |
+| Leagues | Big 5, 1,050–1,185 rows each |
 | Store | `data/processed/market.duckdb` + parquet |
+
+> Originally 7,077 rows over five seasons. P2 found the 2021-22 label snapshot to
+> be stale and excluded it — see [P2](#p2--first-models-) below.
 
 ### What the builder does
 
@@ -179,6 +182,69 @@ what the feature is for, so the test's reference frame was fixed, not the behavi
 
 ---
 
+## P2 — first models ✅
+
+**Built:** `src/eval/{splits,metrics}.py`, `src/models/{baselines,gbm}.py`,
+`scripts/04_train.py`.
+
+Split: train 2017-18 → 2018-19 (2,836) · validate 2019-20 (1,432) · test 2020-21 (1,416).
+
+### Test leaderboard — 2020-21, held out
+
+| Model | log MAE | log R² | MAE €m | MedAE €m | ±30% | Spearman | NDCG@100 |
+|---|---|---|---|---|---|---|---|
+| **CatBoost [update]** | **0.323** | **0.882** | 3.62 | 1.60 | 57.6% | 0.940 | 0.939 |
+| HistGBM [update] | 0.323 | 0.881 | 3.65 | 1.65 | 58.2% | 0.938 | 0.934 |
+| *carry forward prior TM value* | *0.384* | *0.832* | *4.21* | *2.00* | *45.1%* | *0.920* | *0.925* |
+| **CatBoost [coldstart]** | 0.488 | 0.741 | 5.46 | 2.78 | 38.0% | 0.869 | 0.864 |
+| HistGBM [coldstart] | 0.488 | 0.748 | 5.59 | 2.53 | 38.5% | 0.863 | 0.839 |
+| log-linear (age, minutes, G+A) | 0.735 | 0.470 | 8.34 | 4.12 | 23.5% | 0.666 | 0.690 |
+| median by position × age | 0.888 | 0.227 | 10.08 | 5.20 | 18.9% | 0.435 | 0.286 |
+| global median | 1.026 | −0.000 | 10.72 | 5.40 | 17.5% | — | 0.161 |
+
+**How to read this.** The `update` models beat carry-forward by 16% on log MAE
+(0.323 vs 0.384) and lift ±30% hit rate from 45% to 58%. That *gap* is the model's
+contribution, not the R² of 0.88. The `coldstart` model reaching R² 0.741 having
+never seen a Transfermarkt value is the more meaningful result — it is inferring
+worth from football alone.
+
+CatBoost and HistGBM are statistically indistinguishable here. LightGBM and XGBoost
+need the OpenMP runtime (`brew install libomp`), which is not installed on this
+machine; both can join the zoo in P3 if that changes.
+
+### Segment findings
+
+- **Under-24s are hardest** — log MAE 0.378 against ~0.30 for every older band.
+  Young players are priced on potential, which production stats do not carry.
+- **The expensive tail is expensive to miss** — MedAE €7.67m in the top value
+  quartile against €0.53m in the bottom, exactly as anticipated.
+- **Premier League is the best-modelled league** (log MAE 0.258, 72.8% within ±30%);
+  Ligue 1 the worst (0.334, 52.3%).
+- Position differences are mild; DM is weakest on hit rate (50.0%).
+
+### Two defects found and fixed during P2
+
+**1. Aggregate leakage in the context features.** `squad_value_eur` and
+`league_median_value` were computed from the *same* Transfermarkt snapshot the label
+comes from, so each contained the player's own label. James Tarkowski's €25m label sat
+inside his €132m squad total. The >0.98 correlation test could not catch it — diluted
+across a squad the leak shows up as r≈0.03. Both now come from the **prior** season's
+snapshot, and `test_context_aggregates_predate_the_label` verifies it against the raw
+source.
+
+**2. The 2021-22 Transfermarkt label snapshot is stale.** It is a **99.5% copy** of the
+previous season; every other season pair moves 5–22% of players. Left in, the
+carry-forward baseline scored a perfect R²=1.000 — labels *were* the priors. Detection
+is now data-driven (`stale_label_seasons()`, threshold 90% unchanged) rather than a
+hardcoded year, so a future stale snapshot is caught automatically.
+
+**Cost:** the panel dropped from 7,077 rows over five seasons to 5,684 over four, and
+the training window is now two seasons, which makes every `lag2` feature entirely null
+in training. A variance guard drops degenerate columns at fit time rather than
+hardcoding the exclusion.
+
+---
+
 ## Deviations from the original spec
 
 | Original plan | Actual | Why |
@@ -190,17 +256,23 @@ what the feature is for, so the test's reference frame was fixed, not the behavi
 | ~6,500 effective players | 2,688 unique players | Follows from the above; MLP demoted to optional |
 | football-data.org as fixture spine | Dropped | Free tier has no minutes, xG, or defensive actions |
 | Mid-season transfer: keep max-minutes row | Aggregate across clubs | Truncating loses half a season for 9% of rows |
+| 5 label-able seasons, 7,077 rows | 4 seasons, 5,684 rows | 2021-22 TM snapshot is a 99.5% copy of 2020-21 |
+| LightGBM as primary GBM | CatBoost + sklearn HistGBM | LightGBM/XGBoost need OpenMP; not installed, and not worth a system change |
+| Squad/league context from current snapshot | Prior-season snapshot | Contemporaneous aggregates contain the player's own label |
 
 ---
 
-## Next — P2
+## Next — P3
 
-Baselines and the first real model.
+Model zoo and tuning.
 
-1. Tier 0 baselines, all four, including **last season's TM value carried forward** —
-   the one that must be reported alongside every headline number.
-2. LightGBM on both variants.
-3. Temporal split: train 2017-18 → 2019-20, validate 2020-21, test 2021-22.
-4. Player-grouped CV inside the training window.
-5. Metrics in log space, money space (MAE, **MedAE**, sMAPE, ±30% hit rate) and rank
-   space (Spearman, NDCG@100), segmented by position, value decile, league, age band.
+1. Optuna tuning with player-grouped CV inside the training window — untuned defaults
+   are currently doing all the work.
+2. Quantile regression (p10/p50/p90) or conformal intervals, so predictions carry a
+   range. With MedAE €7.7m in the top quartile, a point estimate there is misleading.
+3. Explainable Boosting Machine for the age-curve shape function.
+4. Ridge/ElasticNet with age splines as an interpretable floor.
+5. Stacked ensemble over the survivors.
+6. Consider whether four seasons and a two-season training window justify the full
+   zoo, or whether rolling-origin CV across all four seasons is the better protocol
+   given how thin the panel became.

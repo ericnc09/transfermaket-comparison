@@ -9,6 +9,7 @@ IDENTIFIERS = {
     "Pos", "primary_pos", "player_dob", "player_position", "player_nationality",
     "player_height_mtrs", "contract_expiry", "date_joined", "tier", "eligible",
     "season_end_year", "fb_player", "fb_squad", "pos_group", "player_foot",
+    "label_is_stale",
 }
 TARGETS = {"value_eur", "log_value", "value_deflated", "log_value_deflated"}
 
@@ -19,8 +20,14 @@ PRIOR_VALUE = {"prior_value_eur", "prior_value_deflated", "squad_value_share"}
 CATEGORICAL = ["pos_group", "player_foot", "Comp"]
 
 
-def feature_columns(df: pd.DataFrame, variant: str = "coldstart") -> list[str]:
-    """Numeric feature columns for a variant. `update` keeps the prior valuation."""
+def feature_columns(df: pd.DataFrame, variant: str = "coldstart",
+                    require_variance: bool = False) -> list[str]:
+    """Numeric feature columns for a variant. `update` keeps the prior valuation.
+
+    With `require_variance`, columns that are constant or entirely null in `df`
+    are dropped. Pass the training frame: a short training window can leave a
+    lag column wholly absent, which some learners cannot bin.
+    """
     if variant not in {"coldstart", "update"}:
         raise ValueError(variant)
     drop = IDENTIFIERS | TARGETS
@@ -30,4 +37,6 @@ def feature_columns(df: pd.DataFrame, variant: str = "coldstart") -> list[str]:
         c for c in df.columns
         if c not in drop and pd.api.types.is_numeric_dtype(df[c])
     ]
+    if require_variance:
+        cols = [c for c in cols if df[c].nunique(dropna=True) >= 2]
     return sorted(cols)

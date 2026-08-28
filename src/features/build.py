@@ -117,11 +117,37 @@ LAG_FEATURES = [
 ]
 
 
+STALE_THRESHOLD = 0.90
+
+
 def _tm_by_season() -> pd.DataFrame:
     """One Transfermarkt row per (player, season); mid-season movers appear twice."""
     tm = pd.read_parquet(RAW / "tm_vals.parquet")
     tm = tm.sort_values("player_market_value_euro", ascending=False)
     return tm.drop_duplicates(["player_url", "season_start_year"], keep="first")
+
+
+def stale_label_seasons(threshold: float = STALE_THRESHOLD) -> set[int]:
+    """Snapshots that merely copy the previous season are unusable as labels.
+
+    Transfermarkt normally revalues 78-95% of players between seasons. A snapshot
+    that leaves nearly everyone unchanged has not been refreshed, and using it as
+    a label makes the carry-forward baseline score perfectly while teaching the
+    model nothing.
+    """
+    tm = _tm_by_season()
+    stale = set()
+    for year in sorted(tm.season_start_year.unique()):
+        prev = tm[tm.season_start_year == year - 1].set_index(
+            "player_url").player_market_value_euro
+        cur = tm[tm.season_start_year == year].set_index(
+            "player_url").player_market_value_euro
+        both = prev.index.intersection(cur.index)
+        if len(both) < 200:
+            continue
+        if (prev.loc[both] == cur.loc[both]).mean() >= threshold:
+            stale.add(int(year))
+    return stale
 
 
 def attach_transfermarkt(df: pd.DataFrame) -> pd.DataFrame:
@@ -173,34 +199,49 @@ def attach_transfermarkt(df: pd.DataFrame) -> pd.DataFrame:
 # 5. context and lags
 # --------------------------------------------------------------------------- #
 def add_context(df: pd.DataFrame) -> pd.DataFrame:
-    """Squad wealth, league strength, and the inflation deflator."""
+    """Squad wealth, league strength, and the inflation deflator.
+
+    All three are taken from the snapshot *before* season t. The contemporaneous
+    snapshot is the one the label comes from, so a squad total or league median
+    built on it would contain the player's own label - aggregate leakage that a
+    correlation check will not catch.
+    """
     df = df.copy()
     tm = _tm_by_season()
     tm = tm[tm.player_market_value_euro.notna()]
 
     squad_val = (tm.groupby(["comp_name", "season_start_year", "squad"])
-                   .player_market_value_euro.sum().rename("squad_value_eur")
+                   .player_market_value_euro.sum().rename("squad_value_prior")
                    .reset_index())
-    squad_val["squad_value_rank"] = (squad_val.groupby(["comp_name", "season_start_year"])
-                                     .squad_value_eur.rank(ascending=False))
+    squad_val["squad_value_rank_prior"] = (
+        squad_val.groupby(["comp_name", "season_start_year"])
+                 .squad_value_prior.rank(ascending=False))
+    squad_val["_join_season"] = squad_val.season_start_year + 1
+
     df["_comp_tm"] = df.Comp.map(COMP_MAP)
-    df = df.merge(squad_val, left_on=["_comp_tm", "Season_End_Year", "tm_squad"],
-                  right_on=["comp_name", "season_start_year", "squad"], how="left") \
-           .drop(columns=["comp_name", "season_start_year", "squad"])
+    df = df.merge(
+        squad_val[["comp_name", "_join_season", "squad",
+                   "squad_value_prior", "squad_value_rank_prior"]],
+        left_on=["_comp_tm", "Season_End_Year", "tm_squad"],
+        right_on=["comp_name", "_join_season", "squad"], how="left") \
+        .drop(columns=["comp_name", "_join_season", "squad"])
 
     league = (tm.groupby(["comp_name", "season_start_year"])
-                .player_market_value_euro.median().rename("league_median_value")
+                .player_market_value_euro.median().rename("league_median_prior")
                 .reset_index())
-    df = df.merge(league, left_on=["_comp_tm", "Season_End_Year"],
-                  right_on=["comp_name", "season_start_year"], how="left") \
-           .drop(columns=["comp_name", "season_start_year", "_comp_tm"])
+    league["_join_season"] = league.season_start_year + 1
+    df = df.merge(league[["comp_name", "_join_season", "league_median_prior"]],
+                  left_on=["_comp_tm", "Season_End_Year"],
+                  right_on=["comp_name", "_join_season"], how="left") \
+           .drop(columns=["comp_name", "_join_season", "_comp_tm"])
 
-    # Deflate the target so the model learns quality, not recency.
-    df["value_deflated"] = df.value_eur / df.league_median_value
-    df["prior_value_deflated"] = df.prior_value_eur / df.league_median_value
+    # Deflate by the prior-season median so the model learns quality, not
+    # inflation - and so the deflator is knowable at prediction time.
+    df["value_deflated"] = df.value_eur / df.league_median_prior
+    df["prior_value_deflated"] = df.prior_value_eur / df.league_median_prior
     df["log_value"] = np.log1p(df.value_eur)
     df["log_value_deflated"] = np.log1p(df.value_deflated)
-    df["squad_value_share"] = df.prior_value_eur / df.squad_value_eur
+    df["squad_value_share"] = df.prior_value_eur / df.squad_value_prior
     return df
 
 
@@ -225,9 +266,12 @@ def build_panel() -> pd.DataFrame:
     df = add_lags(df)
     df = df.copy()
     df["pos_group"] = df.player_position.map(POSITION_MAP)
+    stale = stale_label_seasons()
+    df["label_is_stale"] = df.Season_End_Year.isin(stale)
     df["eligible"] = (
         (df.minutes >= MIN_MINUTES)
         & (df.primary_pos != "GK")
         & (df.player_position != "Goalkeeper")
+        & ~df.label_is_stale
     )
     return df.copy()          # de-fragment after the many assignments
