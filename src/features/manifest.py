@@ -9,7 +9,7 @@ IDENTIFIERS = {
     "Pos", "primary_pos", "player_dob", "player_position", "player_nationality",
     "player_height_mtrs", "contract_expiry", "date_joined", "tier", "eligible",
     "season_end_year", "fb_player", "fb_squad", "pos_group", "player_foot",
-    "label_is_stale", "label_source", "tm_player_id",
+    "label_is_stale", "season_is_partial", "label_source", "tm_player_id",
     "label_date", "prior_date",
 }
 TARGETS = {"value_eur", "log_value", "value_deflated", "log_value_deflated"}

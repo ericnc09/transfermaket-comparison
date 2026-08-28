@@ -12,3 +12,9 @@ data/processed/*.duckdb
 
 # CatBoost writes training logs to CWD
 catboost_info/
+
+# Scraped Transfermarkt value histories (~3,200 JSON files, 23 MB).
+# Regenerate with scripts/05_fetch_tm_history.py - about an hour, rate-limited.
+data/raw/tm_value_history/
+data/raw/*.log
+data/processed/*.log

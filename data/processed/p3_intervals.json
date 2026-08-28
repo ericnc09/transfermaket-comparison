@@ -1,0 +1,26 @@
+[
+  {
+    "method":"LGBM quantile [coldstart]",
+    "picp":0.6223585549,
+    "median_width_m":6.4927602437,
+    "median_width_ratio":2.3132387193
+  },
+  {
+    "method":"conformal 80% [coldstart]",
+    "picp":0.8261758691,
+    "median_width_m":9.9916554665,
+    "median_width_ratio":3.3090821465
+  },
+  {
+    "method":"LGBM quantile [update]",
+    "picp":0.6680299932,
+    "median_width_m":4.2761224529,
+    "median_width_ratio":1.7101942547
+  },
+  {
+    "method":"conformal 80% [update]",
+    "picp":0.839127471,
+    "median_width_m":6.4595190734,
+    "median_width_ratio":2.2638722227
+  }
+]

@@ -119,6 +119,7 @@ LAG_FEATURES = [
 
 
 STALE_THRESHOLD = 0.90
+MIN_MATCHES_FOR_COMPLETE_SEASON = 30      # a Big 5 league plays 34-38
 
 
 def _tm_by_season() -> pd.DataFrame:
@@ -126,6 +127,19 @@ def _tm_by_season() -> pd.DataFrame:
     tm = pd.read_parquet(RAW / "tm_vals.parquet")
     tm = tm.sort_values("player_market_value_euro", ascending=False)
     return tm.drop_duplicates(["player_url", "season_start_year"], keep="first")
+
+
+def partial_seasons(df: pd.DataFrame) -> set[int]:
+    """Seasons the source only partly covers.
+
+    The mirror stopped updating in November 2022, so its 2022-23 rows hold about
+    thirteen matches. Those stats cannot sit in the same panel as full seasons:
+    per-90 rates are far noisier and every volume feature is on a different
+    scale, while the label is still a full post-season valuation.
+    """
+    played = df.groupby("Season_End_Year").matches.max()
+    return {int(y) for y, m in played.items()
+            if pd.notna(m) and m < MIN_MATCHES_FOR_COMPLETE_SEASON}
 
 
 def stale_label_seasons(threshold: float = STALE_THRESHOLD) -> set[int]:
@@ -149,6 +163,34 @@ def stale_label_seasons(threshold: float = STALE_THRESHOLD) -> set[int]:
         if (prev.loc[both] == cur.loc[both]).mean() >= threshold:
             stale.add(int(year))
     return stale
+
+
+def _fill_bio_from_player_history(df: pd.DataFrame, tm: pd.DataFrame) -> pd.DataFrame:
+    """Backfill static bio fields from any season in which the mirror saw the player."""
+    def _mode(s: pd.Series):
+        m = s.dropna().mode()
+        return m.iloc[0] if len(m) else None
+
+    per_player = tm.groupby("player_url").agg(
+        _pos=("player_position", _mode),
+        _nat=("player_nationality", _mode),
+        _foot=("player_foot", _mode),
+        _height=("player_height_mtrs", _mode),
+        _dob=("player_dob", _mode),
+    )
+    # Squad is season-specific, so take the club recorded closest to that season.
+    squad = (tm.dropna(subset=["squad"])
+               .sort_values("season_start_year")
+               .groupby("player_url").squad.last().rename("_squad"))
+    per_player = per_player.join(squad)
+
+    j = df.tm_url.map(per_player.to_dict("index"))
+    for col, key in [("player_position", "_pos"), ("player_nationality", "_nat"),
+                     ("player_foot", "_foot"), ("player_height_mtrs", "_height"),
+                     ("player_dob", "_dob"), ("tm_squad", "_squad")]:
+        fill = j.map(lambda d, k=key: d.get(k) if isinstance(d, dict) else None)
+        df[col] = df[col].where(df[col].notna(), fill)
+    return df
 
 
 def attach_transfermarkt(df: pd.DataFrame) -> pd.DataFrame:
@@ -183,6 +225,11 @@ def attach_transfermarkt(df: pd.DataFrame) -> pd.DataFrame:
     df = df.merge(bio, left_on=["tm_url", "Season_End_Year"],
                   right_on=["player_url", "season_start_year"], how="left") \
            .drop(columns=["player_url", "season_start_year"])
+
+    # Scraped labels admit rows the mirror never covered in that season, leaving
+    # bio fields null. A player's position, height and foot do not change, so
+    # fall back to his most common values across every season the mirror has.
+    df = _fill_bio_from_player_history(df, tm)
 
     # The label is dated at the start of season t+1; derive age/contract from it.
     label_date = pd.to_datetime(dict(year=df.Season_End_Year, month=7, day=1))
@@ -274,10 +321,15 @@ def build_panel() -> pd.DataFrame:
     stale = stale_label_seasons()
     df["label_is_stale"] = (df.Season_End_Year.isin(stale)
                             & (df.get("label_source", "mirror") == "mirror"))
+    df["season_is_partial"] = df.Season_End_Year.isin(partial_seasons(df))
     df["eligible"] = (
         (df.minutes >= MIN_MINUTES)
         & (df.primary_pos != "GK")
         & (df.player_position != "Goalkeeper")
         & ~df.label_is_stale
+        & ~df.season_is_partial
+        # A zero valuation is an absence of data, not a price.
+        & (df.value_eur > 0)
+        & df.pos_group.notna()
     )
     return df.copy()          # de-fragment after the many assignments

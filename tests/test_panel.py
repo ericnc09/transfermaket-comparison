@@ -202,3 +202,26 @@ def test_label_moves_between_seasons(panel):
         f"only {moved:.1%} of labels differ from their prior value - "
         "the label snapshot is probably stale"
     )
+
+
+def test_partial_seasons_are_excluded(panel):
+    """A part-played season cannot sit in the same panel as full ones.
+
+    The mirror stopped updating in November 2022, leaving its 2022-23 rows with
+    about thirteen matches. Per-90 rates from a third of a season are far noisier
+    and every volume feature is on a different scale, while the label is still a
+    full post-season valuation.
+    """
+    from src.features.build import MIN_MATCHES_FOR_COMPLETE_SEASON, partial_seasons
+
+    full = pd.read_parquet(PROC / "panel_full.parquet")
+    partial = partial_seasons(full)
+    assert 2023 in partial, "the known-partial 2022-23 season is no longer detected"
+    assert not set(panel.Season_End_Year) & partial
+    assert (panel.groupby("Season_End_Year").matches.max()
+            >= MIN_MATCHES_FOR_COMPLETE_SEASON).all()
+
+
+def test_all_labels_are_scraped(panel):
+    """After the repair every label should come from the dated history."""
+    assert (panel.label_source == "scraped").mean() > 0.99

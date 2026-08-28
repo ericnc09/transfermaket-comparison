@@ -4,7 +4,7 @@ Living record of this project: the plan, every decision and why, and what has
 actually been built. **Updated at the start of every working session and before
 every commit or push.**
 
-Last updated: 2026-08-28 · P3 scaffolding built, data repair in flight
+Last updated: 2026-08-28 · after the data repair and the P3 zoo (untuned)
 
 ---
 
@@ -15,7 +15,7 @@ Last updated: 2026-08-28 · P3 scaffolding built, data repair in flight
 | **P0** | Kill-risk spike — prove the FBref ↔ Transfermarkt join | ✅ Complete |
 | **P1** | Data platform — feature matrix, panel, leakage gates | ✅ Complete |
 | **P2** | First models — baselines + GBM, temporal eval | ✅ Complete |
-| **P3** | Model zoo — full tier list, Optuna, quantiles, ensemble | ▶ Scaffolding built, awaiting repaired panel |
+| **P3** | Model zoo — full tier list, quantiles, ensemble | ✅ Untuned zoo evaluated · Optuna pass outstanding |
 | **P4** | Explain & compare — SHAP, similarity, residual leaderboard | ⬜ Not started |
 | **P5** | Research — forward backtest, model card, writeup | ⬜ Not started |
 
@@ -251,9 +251,48 @@ hardcoding the exclusion.
 
 ---
 
-## P3 — model zoo ▶
+## The data repair ✅
 
-Scaffolding complete and contract-tested; final numbers wait on the repaired panel.
+The stale-label defect was fixed at the source rather than worked around. Transfermarkt's
+own `ceapi/marketValueDevelopment` endpoint returns each player's **full dated value
+history**; `scripts/05_fetch_tm_history.py` crawled all **3,175** panel players at 1.2 s
+per request (~65 min, 100% success, 23 MB cached).
+
+| | Before | After |
+|---|---|---|
+| Rows | 5,684 | **8,247** |
+| Unique players | 2,415 | **3,060** |
+| Label-able seasons | 4 | **5** (2017-18 → 2021-22) |
+| Label source | mirror snapshots | **100% scraped, dated** |
+| `label == prior` | 99.5% in the bad season | 6–20% in every season |
+
+Labels are now defined precisely: for Season_End_Year *Y*, the label is the first
+valuation dated on or after 1 June *Y*, and the prior is the last dated before
+1 August *Y−1*. Both are verified against the raw history by
+`test_scraped_label_is_dated_after_the_season`.
+
+### Three further defects the gates caught
+
+**2022-23 is a partial season.** The mirror stopped updating in November 2022, so its
+2022-23 rows hold ~13 matches and 1,170 minutes against 3,420 for a full season. Per-90
+rates from a third of a season are far noisier and every volume feature is on a
+different scale, while the label is still a full post-season valuation. Detected
+data-driven by `partial_seasons()` and excluded.
+
+**1,321 rows had no position.** Scraped labels admit rows the mirror never covered in
+that season, leaving bio fields null. Position, height and foot do not change, so they
+are backfilled from the player's modal values across every season the mirror does have.
+This also cut missing `squad_value_prior` from 2,065 rows to 879.
+
+**16 rows carried a €0 valuation** — an absence of data, not a price. Excluded; this
+also fixed a stacker round-trip test that was tripping on the clipping boundary.
+
+---
+
+## P3 — model zoo ✅ (untuned)
+
+Rolling-origin CV, 4 folds, on the repaired panel. Hyperparameters are library defaults;
+the Optuna pass is still outstanding.
 
 ### Built
 
@@ -268,28 +307,57 @@ Scaffolding complete and contract-tested; final numbers wait on the repaired pan
 | Orchestrator | `scripts/06_tune_and_evaluate.py` | Tune → rolling-origin evaluate → interval calibration. |
 | Contract tests | `tests/test_models.py` | Units, interval ordering, conformal coverage, no-future-leakage in the fold generator. |
 
-### Smoke-test findings (4-season panel, pre-repair)
+### Leaderboard — mean over 4 rolling-origin folds
 
-| Model | log MAE | Note |
-|---|---|---|
-| LGBM-quantile [coldstart] | 0.450 | Best point estimate, but see coverage below |
-| Conformal(LightGBM) | 0.457 | **PICP 0.810** against a nominal 0.80 |
-| CatBoost [coldstart] | 0.458 | |
-| Stacked | 0.463 | |
-| EBM [coldstart] | 0.490 | Competitive *and* interpretable |
-| Ridge + splines | 0.550 | The interpretable floor |
-| ElasticNet + splines | 0.554 | |
+| Model | log MAE | ±sd | log R² | MedAE €m | ±30% | ρ | NDCG@100 |
+|---|---|---|---|---|---|---|---|
+| **Stacked [update]** | **0.285** | 0.046 | 0.906 | 1.42 | 61.7% | 0.959 | 0.947 |
+| LightGBM [update] | 0.288 | 0.040 | 0.905 | 1.43 | 61.2% | 0.957 | 0.943 |
+| CatBoost [update] | 0.289 | 0.049 | 0.904 | 1.46 | 60.8% | 0.957 | 0.938 |
+| HistGBM [update] | 0.291 | 0.043 | 0.903 | 1.45 | 61.1% | 0.955 | 0.938 |
+| XGBoost [update] | 0.298 | 0.050 | 0.900 | 1.51 | 59.2% | 0.956 | 0.942 |
+| EBM [update] | 0.340 | 0.055 | 0.812 | 1.51 | 58.3% | 0.953 | 0.924 |
+| **CatBoost [coldstart]** | **0.403** | 0.089 | 0.807 | 2.01 | 48.2% | 0.910 | 0.885 |
+| Stacked [coldstart] | 0.403 | 0.089 | 0.800 | 1.96 | 48.4% | 0.912 | 0.891 |
+| LightGBM [coldstart] | 0.413 | 0.083 | 0.809 | 2.07 | 46.3% | 0.901 | 0.880 |
+| ElasticNet+splines [update] | 0.453 | 0.071 | 0.643 | 2.11 | 47.1% | 0.933 | 0.930 |
+| EBM [coldstart] | 0.474 | 0.076 | 0.670 | 2.14 | 44.9% | 0.898 | 0.864 |
+| *carry forward prior TM value* | *0.497* | *0.051* | *0.641* | *2.33* | *42.4%* | *0.852* | *0.910* |
+| Ridge+splines [coldstart] | 0.565 | 0.067 | 0.487 | 2.63 | 38.0% | 0.879 | 0.868 |
+| log-linear (age, minutes, G+A) | 0.725 | 0.014 | 0.463 | 3.67 | 25.3% | 0.657 | 0.712 |
+| global median | 1.010 | 0.015 | −0.017 | 4.60 | 15.9% | — | 0.146 |
 
-Two results worth carrying forward:
+**The headline changed once the labels were real.** Carry-forward fell from 0.402 to
+**0.497**, because a large share of the old labels were stale copies of the prior value
+and were flattering it. Two consequences:
 
-**Conformal beats raw quantile regression on calibration, decisively.** LightGBM's
-quantile objective delivered **PICP 0.622** against a nominal 0.80 — badly
-under-covering, so its "p10–p90" band would have been a lie. Split conformal landed at
-**0.810**. Conformal is the interval method.
+1. The `update` models now beat carry-forward by **43%** (0.285 vs 0.497), not the 10%
+   the broken panel suggested.
+2. **The cold-start model beats carry-forward outright** (0.403 vs 0.497). A model that
+   has never seen a Transfermarkt value predicts the next valuation better than
+   Transfermarkt's own previous valuation does. That is the result the whole project
+   was built to test, and it is the one to write up.
 
-**EBM is competitive with the boosters** (0.490 vs 0.458–0.465) while giving a
-per-feature shape function. For a project whose output is an argument about *why*
-a player is mispriced, that trade is worth making.
+Carry-forward still holds a strong NDCG@100 (0.910): nothing ranks the most expensive
+players quite like leaving last year's number alone.
+
+**Ridge and ElasticNet look better than they are.** Competitive log MAE (0.453) but
+MAE €10.1m — being linear in log space, they blow up multiplicatively on the expensive
+tail. Useful as an interpretable floor, not as a predictor.
+
+### Interval calibration — nominal 80%
+
+| Method | PICP | median width €m | width ratio |
+|---|---|---|---|
+| LGBM quantile [coldstart] | **0.622** | 6.49 | 2.31 |
+| conformal 80% [coldstart] | **0.826** | 9.99 | 3.31 |
+| LGBM quantile [update] | **0.668** | 4.28 | 1.71 |
+| conformal 80% [update] | **0.839** | 6.46 | 2.26 |
+
+Confirmed at full scale: LightGBM's quantile objective under-covers badly — a
+"p10–p90" band that actually contains the truth 62% of the time would be a lie. Split
+conformal lands within four points of nominal in both variants, at the cost of a wider
+band. **Conformal is the interval method.**
 
 ### A bug found and fixed
 
@@ -319,17 +387,14 @@ components as expected. `test_stacker_target_space_roundtrip` now pins the conve
 
 ---
 
-## Next — P3
+## Next
 
-Model zoo and tuning.
-
-1. Optuna tuning with player-grouped CV inside the training window — untuned defaults
-   are currently doing all the work.
-2. Quantile regression (p10/p50/p90) or conformal intervals, so predictions carry a
-   range. With MedAE €7.7m in the top quartile, a point estimate there is misleading.
-3. Explainable Boosting Machine for the age-curve shape function.
-4. Ridge/ElasticNet with age splines as an interpretable floor.
-5. Stacked ensemble over the survivors.
-6. Consider whether four seasons and a two-season training window justify the full
-   zoo, or whether rolling-origin CV across all four seasons is the better protocol
-   given how thin the panel became.
+1. **Optuna pass** (`scripts/06_tune_and_evaluate.py --trials 30`). Every number above
+   is from library defaults. Expect modest gains — the families are already within one
+   standard deviation of each other, which usually means the data, not the
+   hyperparameters, is the binding constraint.
+2. **P4 — explain and compare.** SHAP attributions, the EBM age curve, the kNN
+   comparable-players engine, and the residual leaderboard built on `coldstart`.
+3. **P5 — the forward backtest.** Now genuinely possible: the scraped histories run to
+   2026, so residuals at season *t* can be checked against actual value movement over
+   the following year. This is the study that would carry a writeup.
