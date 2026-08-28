@@ -1,0 +1,233 @@
+"""Build the modelling panel: FBref season stats joined to Transfermarkt labels.
+
+Alignment: stats from season t predict the Transfermarkt valuation published at
+the start of season t+1. Nothing dated on or after the label enters X.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from src.entity.resolve import COMP_MAP
+from src.features.definitions import COUNTS, POSITION_MAP, RENAME, VOLUME, WEIGHTED
+
+ROOT = Path(__file__).resolve().parents[2]
+RAW = ROOT / "data" / "raw"
+KEY = ["Season_End_Year", "Squad", "Comp", "Url"]
+SEASONS = range(2018, 2024)          # FBref Season_End_Year
+MIN_MINUTES = 600
+
+
+# --------------------------------------------------------------------------- #
+# 1. wide FBref matrix
+# --------------------------------------------------------------------------- #
+def load_fbref_wide() -> pd.DataFrame:
+    """Merge the nine FBref stat tables into one player-squad-season row."""
+    base = pd.read_parquet(RAW / "fbref_standard.parquet")
+    base = base[base.Season_End_Year.isin(SEASONS)]
+    base = base[base.Url.str.contains(r"/players/[0-9a-f]+/", na=False)]
+
+    keep = KEY + ["Player", "Nation", "Pos", "Born"]
+    keep += COUNTS["standard"] + VOLUME["standard"]
+    wide = base[keep].copy()
+
+    for table, cols in COUNTS.items():
+        if table == "standard":
+            continue
+        df = pd.read_parquet(RAW / f"fbref_{table}.parquet")
+        df = df[df.Season_End_Year.isin(SEASONS)]
+        take = [c for c in cols + WEIGHTED.get(table, []) if c in df.columns]
+        missing = set(cols) - set(df.columns)
+        if missing:
+            raise KeyError(f"{table} missing {missing}")
+        df = df[KEY + take].drop_duplicates(KEY)
+        wide = wide.merge(df, on=KEY, how="left", suffixes=("", f"_{table}"))
+    return wide
+
+
+# --------------------------------------------------------------------------- #
+# 2. collapse mid-season transfers
+# --------------------------------------------------------------------------- #
+def aggregate_player_season(wide: pd.DataFrame) -> pd.DataFrame:
+    """One row per (player, season). Counting stats sum; rates weight by minutes."""
+    count_cols = [c for cols in COUNTS.values() for c in cols]
+    vol_cols = VOLUME["standard"]
+    wt_cols = [c for cols in WEIGHTED.values() for c in cols if c in wide.columns]
+
+    wide = wide.sort_values("Min_Playing", ascending=False)
+    g = wide.groupby(["Url", "Season_End_Year"], sort=False)
+
+    out = g[count_cols + vol_cols].sum(min_count=1)
+
+    # Minutes-weighted means for the rate-like columns.
+    for c in wt_cols:
+        num = wide[c].mul(wide.Min_Playing)
+        out[c] = (num.groupby([wide.Url, wide.Season_End_Year]).sum()
+                  / g.Min_Playing.sum())
+
+    # Context comes from the club the player spent most minutes at.
+    first = g[["Player", "Nation", "Pos", "Born", "Squad", "Comp"]].first()
+    out = out.join(first)
+    out["n_clubs"] = g.size()
+    return out.reset_index()
+
+
+# --------------------------------------------------------------------------- #
+# 3. per-90 rates and ratios
+# --------------------------------------------------------------------------- #
+def derive_rates(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.rename(columns=RENAME)
+    per90 = df.minutes / 90.0
+
+    rate_src = [RENAME[c] for cols in COUNTS.values() for c in cols]
+    for c in rate_src:
+        df[f"{c}_p90"] = df[c] / per90
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        df["shot_accuracy"] = df.shots_on_target / df.shots.replace(0, np.nan)
+        df["pass_cmp_pct"] = df.passes_cmp / df.passes_att.replace(0, np.nan)
+        df["long_cmp_pct"] = df.long_cmp / df.long_att.replace(0, np.nan)
+        df["dribble_succ_pct"] = df.dribbles_succ / df.dribbles_att.replace(0, np.nan)
+        df["aerial_win_pct"] = df.aerials_won / (
+            df.aerials_won + df.aerials_lost).replace(0, np.nan)
+        df["npxg_per_shot"] = df.npxg / df.shots.replace(0, np.nan)
+        df["tackle_win_pct"] = df.tackles_won / df.tackles.replace(0, np.nan)
+
+    # Overperformance: the regression-to-mean signal.
+    df["g_minus_xg"] = df.np_goals - df.npxg
+    df["a_minus_xag"] = df.assists - df.xag
+    df["g_minus_xg_p90"] = df.g_minus_xg / per90
+    df["a_minus_xag_p90"] = df.a_minus_xag / per90
+    df["npxg_xag_p90"] = (df.npxg + df.xag) / per90
+    df["ga_p90"] = (df.goals + df.assists) / per90
+
+    df["primary_pos"] = df.Pos.str.split(",").str[0]
+    df["pos_count"] = df.Pos.str.count(",").add(1)
+    return df
+
+
+# --------------------------------------------------------------------------- #
+# 4. Transfermarkt: labels, bio, contract, prior value
+# --------------------------------------------------------------------------- #
+LAG_FEATURES = [
+    "minutes", "starts", "npxg_xag_p90", "ga_p90", "goals_p90", "assists_p90",
+    "sca_p90", "prog_passes_p90", "tackles_p90", "touches_p90", "minutes_pct",
+]
+
+
+def _tm_by_season() -> pd.DataFrame:
+    """One Transfermarkt row per (player, season); mid-season movers appear twice."""
+    tm = pd.read_parquet(RAW / "tm_vals.parquet")
+    tm = tm.sort_values("player_market_value_euro", ascending=False)
+    return tm.drop_duplicates(["player_url", "season_start_year"], keep="first")
+
+
+def attach_transfermarkt(df: pd.DataFrame) -> pd.DataFrame:
+    link = pd.read_parquet(ROOT / "data/interim/big5_resolution.parquet")
+    link = link.dropna(subset=["tm_url"]).drop_duplicates(["fb_url", "season_end_year"])
+    df = df.merge(link[["fb_url", "season_end_year", "tm_url", "tier"]],
+                  left_on=["Url", "Season_End_Year"],
+                  right_on=["fb_url", "season_end_year"], how="left")
+
+    tm = _tm_by_season()
+
+    # Label: value published at the start of season t+1.
+    label = tm[["player_url", "season_start_year", "player_market_value_euro"]].rename(
+        columns={"player_market_value_euro": "value_eur"})
+    df = df.merge(label, left_on=["tm_url", "Season_End_Year"],
+                  right_on=["player_url", "season_start_year"], how="left") \
+           .drop(columns=["player_url", "season_start_year"])
+
+    # Prior value: published before season t. Feature for the `update` variant only.
+    prior = label.rename(columns={"value_eur": "prior_value_eur"})
+    prior["_join_season"] = prior.season_start_year + 1
+    df = df.merge(prior[["player_url", "_join_season", "prior_value_eur"]],
+                  left_on=["tm_url", "Season_End_Year"],
+                  right_on=["player_url", "_join_season"], how="left") \
+           .drop(columns=["player_url", "_join_season"])
+
+    # Bio and contract, taken from the row contemporaneous with the label.
+    bio = tm[["player_url", "season_start_year", "player_dob", "player_position",
+              "player_nationality", "player_height_mtrs", "player_foot",
+              "contract_expiry", "date_joined", "squad"]].rename(
+        columns={"squad": "tm_squad"})
+    df = df.merge(bio, left_on=["tm_url", "Season_End_Year"],
+                  right_on=["player_url", "season_start_year"], how="left") \
+           .drop(columns=["player_url", "season_start_year"])
+
+    # The label is dated at the start of season t+1; derive age/contract from it.
+    label_date = pd.to_datetime(dict(year=df.Season_End_Year, month=7, day=1))
+    dob = pd.to_datetime(df.player_dob, errors="coerce")
+    df["age"] = (label_date - dob).dt.days / 365.25
+    exp = pd.to_datetime(df.contract_expiry, errors="coerce")
+    df["contract_months_left"] = (exp - label_date).dt.days / 30.44
+    joined = pd.to_datetime(df.date_joined, errors="coerce")
+    df["years_at_club"] = (label_date - joined).dt.days / 365.25
+    df["height_m"] = pd.to_numeric(df.player_height_mtrs, errors="coerce")
+    return df
+
+
+# --------------------------------------------------------------------------- #
+# 5. context and lags
+# --------------------------------------------------------------------------- #
+def add_context(df: pd.DataFrame) -> pd.DataFrame:
+    """Squad wealth, league strength, and the inflation deflator."""
+    df = df.copy()
+    tm = _tm_by_season()
+    tm = tm[tm.player_market_value_euro.notna()]
+
+    squad_val = (tm.groupby(["comp_name", "season_start_year", "squad"])
+                   .player_market_value_euro.sum().rename("squad_value_eur")
+                   .reset_index())
+    squad_val["squad_value_rank"] = (squad_val.groupby(["comp_name", "season_start_year"])
+                                     .squad_value_eur.rank(ascending=False))
+    df["_comp_tm"] = df.Comp.map(COMP_MAP)
+    df = df.merge(squad_val, left_on=["_comp_tm", "Season_End_Year", "tm_squad"],
+                  right_on=["comp_name", "season_start_year", "squad"], how="left") \
+           .drop(columns=["comp_name", "season_start_year", "squad"])
+
+    league = (tm.groupby(["comp_name", "season_start_year"])
+                .player_market_value_euro.median().rename("league_median_value")
+                .reset_index())
+    df = df.merge(league, left_on=["_comp_tm", "Season_End_Year"],
+                  right_on=["comp_name", "season_start_year"], how="left") \
+           .drop(columns=["comp_name", "season_start_year", "_comp_tm"])
+
+    # Deflate the target so the model learns quality, not recency.
+    df["value_deflated"] = df.value_eur / df.league_median_value
+    df["prior_value_deflated"] = df.prior_value_eur / df.league_median_value
+    df["log_value"] = np.log1p(df.value_eur)
+    df["log_value_deflated"] = np.log1p(df.value_deflated)
+    df["squad_value_share"] = df.prior_value_eur / df.squad_value_eur
+    return df
+
+
+def add_lags(df: pd.DataFrame) -> pd.DataFrame:
+    """True season-1 and season-2 lags; null when the player was absent."""
+    df = df.copy()
+    for k in (1, 2):
+        lag = df[["Url", "Season_End_Year"] + LAG_FEATURES].copy()
+        lag["Season_End_Year"] += k
+        lag = lag.rename(columns={c: f"{c}_lag{k}" for c in LAG_FEATURES})
+        df = df.merge(lag, on=["Url", "Season_End_Year"], how="left")
+    df["minutes_growth"] = df.minutes - df.minutes_lag1
+    df["npxg_xag_growth"] = df.npxg_xag_p90 - df.npxg_xag_p90_lag1
+    df["seasons_observed"] = df[["minutes_lag1", "minutes_lag2"]].notna().sum(axis=1)
+    return df
+
+
+def build_panel() -> pd.DataFrame:
+    df = derive_rates(aggregate_player_season(load_fbref_wide()))
+    df = attach_transfermarkt(df)
+    df = add_context(df)
+    df = add_lags(df)
+    df = df.copy()
+    df["pos_group"] = df.player_position.map(POSITION_MAP)
+    df["eligible"] = (
+        (df.minutes >= MIN_MINUTES)
+        & (df.primary_pos != "GK")
+        & (df.player_position != "Goalkeeper")
+    )
+    return df.copy()          # de-fragment after the many assignments

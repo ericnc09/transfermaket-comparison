@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.pytest_cache/
+
+# Build artefacts: regenerate with scripts/01_ingest.py and scripts/03_build_panel.py
+data/raw/*.parquet
+data/interim/*.parquet
+data/processed/*.parquet
+data/processed/*.duckdb

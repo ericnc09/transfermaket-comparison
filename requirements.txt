@@ -1,0 +1,14 @@
+RapidFuzz==3.14.5
+Unidecode==1.4.0
+beautifulsoup4==4.15.0
+duckdb==1.5.5
+lxml==6.1.2
+matplotlib==3.11.1
+numpy==2.5.2
+pandas==3.0.5
+polars==1.44.1
+pyarrow==25.0.1
+pyreadr==0.5.6
+requests-cache==1.3.3
+requests==2.34.2
+scipy==1.18.1
