@@ -12,6 +12,17 @@ import pandas as pd
 from src.eval.metrics import score
 from src.eval.splits import grouped_folds
 
+# Per-family trial budgets. Cost per fit differs by more than an order of
+# magnitude, so a flat budget would spend most of the wall clock on EBM - which
+# is the slowest family and not the accuracy leader. Spend where it buys most.
+TRIAL_BUDGET = {
+    "LightGBM": 1.0,
+    "XGBoost": 1.0,
+    "HistGBM": 1.0,
+    "CatBoost": 0.6,
+    "EBM": 0.3,
+}
+
 SPACES = {
     "LightGBM": lambda t: dict(
         n_estimators=t.suggest_int("n_estimators", 300, 2500, step=100),

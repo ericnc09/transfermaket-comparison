@@ -4,7 +4,7 @@ Living record of this project: the plan, every decision and why, and what has
 actually been built. **Updated at the start of every working session and before
 every commit or push.**
 
-Last updated: 2026-08-28 · after the data repair and the P3 zoo (untuned)
+Last updated: 2026-08-28 · Optuna pass running; tuning now checkpointed
 
 ---
 
@@ -389,10 +389,21 @@ components as expected. `test_stacker_target_space_roundtrip` now pins the conve
 
 ## Next
 
-1. **Optuna pass** (`scripts/06_tune_and_evaluate.py --trials 30`). Every number above
-   is from library defaults. Expect modest gains — the families are already within one
-   standard deviation of each other, which usually means the data, not the
-   hyperparameters, is the binding constraint.
+1. **Optuna pass** — running. Trial budgets are weighted per family (`TRIAL_BUDGET`),
+   since cost per fit differs by more than 10× and EBM is both slowest and not the
+   accuracy leader. Measured cost is far higher than estimated: ~19 min for LightGBM
+   but ~50 min for CatBoost per variant, ~5.7 h for the full pass.
+
+   Interim CV scores are tightly clustered — cold-start 0.367–0.373, update
+   0.261–0.266, all three families within 0.006 — reinforcing that the families are
+   interchangeable and the data is the binding constraint. These are training-window
+   CV numbers and are **not** comparable to the held-out test-fold figures above; only
+   the rolling-origin re-evaluation settles whether tuning helped.
+
+   **Tuning is now checkpointed after every family.** It previously wrote
+   `p3_best_params.json` only once the entire loop finished, so an interrupted run
+   threw away hours of completed work. A restart now skips whatever is already on
+   disk.
 2. **P4 — explain and compare.** SHAP attributions, the EBM age curve, the kNN
    comparable-players engine, and the residual leaderboard built on `coldstart`.
 3. **P5 — the forward backtest.** Now genuinely possible: the scraped histories run to

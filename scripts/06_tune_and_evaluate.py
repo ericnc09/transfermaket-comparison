@@ -27,7 +27,7 @@ from src.models.ensemble import Stacked
 from src.models.gbm import CatBoost, HistGBM, LightGBM, XGBoost
 from src.models.linear import ElasticNetSpline, RidgeSpline
 from src.models.quantile import Conformal, QuantileTrio, interval_report
-from src.models.tuning import tune
+from src.models.tuning import TRIAL_BUDGET, tune
 
 ROOT = Path(__file__).resolve().parents[1]
 PROC = ROOT / "data" / "processed"
@@ -46,19 +46,35 @@ def main(trials: int, variants: list[str]) -> None:
     print(f"{len(folds)} rolling-origin folds\n", flush=True)
 
     # ---- tuning, on the last fold's training window only -------------------
-    best: dict[tuple[str, str], dict] = {}
+    # Checkpointed after every family so an interrupted run resumes instead of
+    # restarting. Tuning costs hours; losing it to a reboot is not acceptable.
+    ckpt = PROC / "p3_best_params.json"
+    saved = json.loads(ckpt.read_text()) if ckpt.exists() else {}
+    best: dict[tuple[str, str], dict] = {
+        (k.split("|")[0], k.split("|")[1]): v["params"] if isinstance(v, dict)
+        and "params" in v else v
+        for k, v in saved.items()
+    }
     if trials:
         _, tune_train, _ = folds[-1]
+        if best:
+            print(f"resuming: {len(best)} tuning job(s) already checkpointed", flush=True)
         for fam, cls in FAMILIES.items():
             for variant in variants:
+                if (fam, variant) in best:
+                    print(f"skip  {fam:<9} [{variant:<9}] already tuned", flush=True)
+                    continue
                 t0 = time.time()
-                res = tune(cls, fam, tune_train, variant, n_trials=trials)
+                budget = max(8, int(trials * TRIAL_BUDGET.get(fam, 1.0)))
+                res = tune(cls, fam, tune_train, variant,
+                           n_trials=budget, n_splits=3)
                 best[(fam, variant)] = res["best_params"]
-                print(f"tuned {fam:<9} [{variant:<9}] "
+                # Persist immediately - before the next family starts.
+                ckpt.write_text(json.dumps(
+                    {f"{f}|{v}": pr for (f, v), pr in best.items()}, indent=2))
+                print(f"tuned {fam:<9} [{variant:<9}] trials={budget:<3} "
                       f"cv_log_mae={res['best_cv_log_mae']:.4f} "
-                      f"({time.time()-t0:.0f}s)", flush=True)
-        (PROC / "p3_best_params.json").write_text(json.dumps(
-            {f"{f}|{v}": p for (f, v), p in best.items()}, indent=2))
+                      f"({time.time()-t0:.0f}s)  [checkpointed]", flush=True)
         print(flush=True)
 
     def build():
