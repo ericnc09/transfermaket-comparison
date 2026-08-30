@@ -69,3 +69,41 @@ def attach_real_labels(df: pd.DataFrame, seasons: list[int]) -> pd.DataFrame:
     df["prior_value_eur"] = df.prior_value_eur_real.where(
         df.prior_value_eur_real.notna(), df.prior_value_eur)
     return df.drop(columns=["value_eur_real", "prior_value_eur_real"])
+
+
+def forward_values(pairs: pd.DataFrame, horizon_days: int = 365,
+                   tolerance_days: int = 120) -> pd.DataFrame:
+    """Transfermarkt value one year after each label date.
+
+    `pairs` needs tm_player_id and label_date. Returns the first valuation dated
+    at least `horizon_days` later, provided one exists within `tolerance_days`
+    of that target - otherwise the row gets no forward value rather than a
+    stale one.
+    """
+    hist = load_history()
+    if hist.empty:
+        return pd.DataFrame()
+
+    by_player = {pid: g.sort_values("value_date")
+                 for pid, g in hist.groupby("tm_player_id", sort=False)}
+    out = []
+    for r in pairs.itertuples():
+        g = by_player.get(r.tm_player_id)
+        if g is None or pd.isna(r.label_date):
+            continue
+        target = r.label_date + pd.Timedelta(days=horizon_days)
+        later = g[g.value_date >= target]
+        if later.empty:
+            continue
+        hit = later.iloc[0]
+        if (hit.value_date - target).days > tolerance_days:
+            continue
+        # A zero valuation means Transfermarkt stopped pricing the player, not
+        # that he became worthless. Left in, log1p(0) turns a EUR10m player into
+        # a -16 log-point "return" and a handful of rows dominate the fit.
+        if hit.value_eur <= 0:
+            continue
+        out.append({"tm_player_id": r.tm_player_id, "label_date": r.label_date,
+                    "fwd_value_eur": float(hit.value_eur),
+                    "fwd_date": hit.value_date})
+    return pd.DataFrame(out)

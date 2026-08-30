@@ -4,7 +4,7 @@ Living record of this project: the plan, every decision and why, and what has
 actually been built. **Updated at the start of every working session and before
 every commit or push.**
 
-Last updated: 2026-08-30 · after P4 (explain & compare)
+Last updated: 2026-08-30 · after P5 (forward backtest)
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-30 · after P4 (explain & compare)
 | **P2** | First models — baselines + GBM, temporal eval | ✅ Complete |
 | **P3** | Model zoo — full tier list, quantiles, ensemble, tuning | ✅ Complete |
 | **P4** | Explain & compare — SHAP, similarity, residual leaderboard | ✅ Complete |
-| **P5** | Research — forward backtest, model card, writeup | ▶ Next |
+| **P5** | Research — forward backtest | ✅ Backtest complete · model card outstanding |
 
 Full system design: <https://claude.ai/code/artifact/7f2391b1-149f-4f3b-bbf0-37063d6d38dd>
 
@@ -462,6 +462,69 @@ columns bypass it.
 
 ---
 
+## P5 — the forward backtest ✅
+
+**Built:** `forward_values()` in `src/features/labels.py`, `scripts/09_backtest.py`.
+
+The question the whole project was built to answer: when the cold-start model disagrees
+with Transfermarkt, does Transfermarkt subsequently move *toward* the model?
+
+Sample: **4,591 player-seasons, 2,359 players, four seasons.** For each row, the
+Transfermarkt valuation one year after the label date (±120 days, else no row).
+
+### Why the naive version of this test is worthless
+
+Let *V* be the Transfermarkt value and suppose it carries transient noise *e* —
+Transfermarkt has overshot. The residual (log *M* − log *V*) then contains −*e*, and the
+forward return (log *V′* − log *V*) also contains −*e*, because the overshoot reverts.
+**Any model that merely fails to replicate Transfermarkt's noise will appear to predict
+its future movements.** That is mean reversion, not skill, and a raw correlation cannot
+tell the two apart.
+
+### Result
+
+| Specification | β on residual | s.e. | p |
+|---|---|---|---|
+| raw, no controls | +0.231 | 0.020 | ~0 |
+| + TM momentum | +0.232 | 0.019 | ~0 |
+| **+ age, price, season** | **+0.187** | **0.018** | **2.8e-25** |
+
+Standard errors clustered by player. A 1.0 log-point disagreement maps to a **+0.187
+log-point** move in the following year's Transfermarkt value — the market closes about
+**19% of the gap within a year**. Raw top-minus-bottom decile spread is +0.332 log
+points (+39% in value terms), but that figure includes the mean reversion and is not the
+claim.
+
+### It survives the checks that matter
+
+- **Every season independently**: β = +0.275, +0.173, +0.206, +0.137 (all p < 0.001).
+  Not a single-season fluke that a fixed effect is hiding.
+- **Where Transfermarkt has *not* recently moved the value** (|momentum| < 0.05, n=532):
+  β = **+0.213, p = 0.0004**. Pure mean reversion needs a recent move to revert; the
+  signal is undiminished where there is none. This is the strongest single piece of
+  evidence against the reversion explanation.
+
+### A defect the figure caught
+
+The first run gave β = +0.243, but the scatter showed a cluster at −12 to −16 log
+points: **29 rows (0.63%) with a €0 forward value** — players Transfermarkt stopped
+pricing, where `log1p(0)` turns a €10m player into a −16 log-point "return". Excluding
+them *lowered* the coefficient to +0.187 while raising the t-statistic from 7.2 to 10.4
+and R² from 0.117 to 0.234. It also flipped the key robustness test: the low-momentum
+subsample went from p = 0.15 to p = 0.0004. The outliers had been inflating the estimate
+and destroying the precision of the check that mattered most.
+
+### What this does and does not show
+
+It shows the cold-start model carries information about future Transfermarkt movements
+that is not explained by mean reversion, age, price level, or season. It does **not**
+show the model is right and Transfermarkt wrong about intrinsic worth — Transfermarkt
+value is the only ground truth here, and the test measures convergence toward the model,
+not toward realised fees. The single control for reversion is one lag of Transfermarkt's
+own move; a richer autoregressive control would strengthen the claim further.
+
+---
+
 ## Deviations from the original spec
 
 | Original plan | Actual | Why |
@@ -499,11 +562,13 @@ columns bypass it.
    `p3_best_params.json` only once the entire loop finished, so an interrupted run
    threw away hours of completed work. A restart now skips whatever is already on
    disk.
-2. **P5 — the forward backtest.** The study that would carry a writeup, and the only
-   design in which "we beat Transfermarkt" is a defensible claim rather than a circular
-   one. Take price-adjusted residuals at season *t* and measure the actual Transfermarkt
-   value movement over the following year. The scraped histories run to 2026, so this is
-   now fully supported by the data on disk.
-3. **Model card**, covering the blind spots P4 surfaced: the cold-start model cannot see
-   off-field events (Greenwood), reputation, or injury, and its residuals must be read
-   within a price stratum.
+2. **Model card**, covering the blind spots P4 and P5 surfaced: the cold-start model
+   cannot see off-field events (Greenwood), reputation, or injury; its residuals only
+   mean something within a price stratum; and the backtest measures convergence toward
+   the model, not toward realised fees.
+3. **Optional — a richer mean-reversion control.** The backtest uses one lag of
+   Transfermarkt's own move. An autoregressive control over the full valuation history
+   would tighten the causal claim.
+4. **Optional — realised-fee arbitration.** On transfers with a disclosed fee, compare
+   model error against Transfermarkt error relative to what a club actually paid. Small
+   n and heavy selection bias, so suggestive rather than decisive.

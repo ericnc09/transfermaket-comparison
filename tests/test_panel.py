@@ -249,3 +249,18 @@ def test_league_level_is_knowable_before_the_label():
     got = full.groupby(["Comp", "Season_End_Year"]).league_median_prior.first()
     for key, w in want.items():
         assert abs(got[key] - w) < 1.0, f"{key}: {got[key]} != {w}"
+
+
+def test_forward_values_exclude_zero_valuations():
+    """A EUR0 forward value means TM stopped pricing the player, not that he is worthless.
+
+    Left in, log1p(0) turns a EUR10m player into a -16 log-point "return", and 29
+    such rows were enough to inflate the backtest coefficient while destroying
+    the precision of its key robustness subsample.
+    """
+    path = PROC / "p5_backtest_sample.parquet"
+    if not path.exists():
+        pytest.skip("backtest sample not built")
+    d = pd.read_parquet(path)
+    assert (d.fwd_value_eur > 0).all()
+    assert d.fwd_return.abs().max() < 5, "implausible forward return survived"
