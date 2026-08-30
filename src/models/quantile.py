@@ -57,8 +57,16 @@ class QuantileTrio:
 class Conformal:
     """Split-conformal intervals around any point model.
 
-    Calibration residuals are taken in log space, so the resulting euro interval
-    is a multiplicative band around the prediction.
+    Calibration residuals are taken in log space, so the euro interval is a
+    multiplicative band around the prediction.
+
+    Two caveats worth knowing. The `p10`/`p90` column names are a convenience:
+    this is a symmetric fixed-width band at the nominal confidence level, not an
+    estimate of the 10th and 90th percentiles, and the two coincide only if the
+    residual distribution is symmetric. And conformal's finite-sample coverage
+    guarantee assumes exchangeability between calibration and test, which a
+    temporal split breaks - measured coverage here sits just under nominal
+    (0.79 against 0.80) for exactly that reason.
     """
 
     def __init__(self, base, confidence: float = 0.8, calib_frac: float = 0.25,
@@ -78,7 +86,12 @@ class Conformal:
         mask = train.tm_url.isin(held)
         fit_part, calib = train[~mask], train[mask]
         if len(calib) < 50:
-            fit_part, calib = train, train
+            # Falling back to in-sample calibration would use residuals far
+            # smaller than out-of-sample ones and produce intervals that look
+            # tight and cover nothing. Better to fail loudly.
+            raise ValueError(
+                f"conformal calibration slice too small ({len(calib)} rows from "
+                f"{len(train)}); lower calib_frac or supply more training data")
 
         self.base.fit(fit_part, valid)
         pred = np.log1p(np.clip(self.base.predict(calib), 1e4, None))

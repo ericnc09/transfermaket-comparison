@@ -4,7 +4,7 @@ Living record of this project: the plan, every decision and why, and what has
 actually been built. **Updated at the start of every working session and before
 every commit or push.**
 
-Last updated: 2026-08-30 · P5 complete, model card written
+Last updated: 2026-08-30 · after an ML review: leaderboard corrected, 3 bugs fixed
 
 ---
 
@@ -309,23 +309,27 @@ the tuning changed almost nothing, which is itself the finding — see below.
 
 ### Leaderboard — mean over 4 rolling-origin folds
 
-| Model | log MAE | ±sd | log R² | MedAE €m | ±30% | ρ | NDCG@100 |
-|---|---|---|---|---|---|---|---|
-| **Stacked [update]** | **0.285** | 0.046 | 0.906 | 1.42 | 61.7% | 0.959 | 0.947 |
-| LightGBM [update] | 0.288 | 0.040 | 0.905 | 1.43 | 61.2% | 0.957 | 0.943 |
-| CatBoost [update] | 0.289 | 0.049 | 0.904 | 1.46 | 60.8% | 0.957 | 0.938 |
-| HistGBM [update] | 0.291 | 0.043 | 0.903 | 1.45 | 61.1% | 0.955 | 0.938 |
-| XGBoost [update] | 0.298 | 0.050 | 0.900 | 1.51 | 59.2% | 0.956 | 0.942 |
-| EBM [update] | 0.340 | 0.055 | 0.812 | 1.51 | 58.3% | 0.953 | 0.924 |
-| **CatBoost [coldstart]** | **0.403** | 0.089 | 0.807 | 2.01 | 48.2% | 0.910 | 0.885 |
-| Stacked [coldstart] | 0.403 | 0.089 | 0.800 | 1.96 | 48.4% | 0.912 | 0.891 |
-| LightGBM [coldstart] | 0.413 | 0.083 | 0.809 | 2.07 | 46.3% | 0.901 | 0.880 |
-| ElasticNet+splines [update] | 0.453 | 0.071 | 0.643 | 2.11 | 47.1% | 0.933 | 0.930 |
-| EBM [coldstart] | 0.474 | 0.076 | 0.670 | 2.14 | 44.9% | 0.898 | 0.864 |
-| *carry forward prior TM value* | *0.497* | *0.051* | *0.641* | *2.33* | *42.4%* | *0.852* | *0.910* |
-| Ridge+splines [coldstart] | 0.565 | 0.067 | 0.487 | 2.63 | 38.0% | 0.879 | 0.868 |
-| log-linear (age, minutes, G+A) | 0.725 | 0.014 | 0.463 | 3.67 | 25.3% | 0.657 | 0.712 |
-| global median | 1.010 | 0.015 | −0.017 | 4.60 | 15.9% | — | 0.146 |
+> **Superseded and regenerated.** The table originally published here was produced
+> before the P4 corrections (deflated target, `Season_End_Year`/`Born` as features)
+> and was stale. These are the numbers the current code produces. Only the key rows
+> were re-run; the full zoo (HistGBM, XGBoost, EBM, Ridge, Stacked) still needs a
+> pass and is not quoted until it has one.
+
+| Model | log MAE | ±sd | log R² | MedAE €m | ±30% | NDCG@100 |
+|---|---|---|---|---|---|---|
+| **CatBoost [update]** | **0.261** | 0.033 | 0.922 | 1.28 | 66.5% | 0.934 |
+| LightGBM [update] | 0.271 | 0.041 | 0.917 | 1.37 | 65.3% | 0.946 |
+| **CatBoost [coldstart]** | **0.364** | 0.059 | 0.853 | 1.79 | 52.6% | 0.894 |
+| LightGBM [coldstart] | 0.372 | 0.050 | 0.847 | 1.89 | 50.7% | 0.905 |
+| *carry forward prior TM value* | *0.497* | *0.051* | *0.641* | *2.33* | *42.4%* | *0.910* |
+| log-linear (age, minutes, G+A) | 0.725 | 0.014 | 0.463 | 3.67 | 25.3% | 0.712 |
+| median by position × age | 0.883 | 0.033 | 0.201 | 4.75 | 20.6% | 0.281 |
+| global median | 1.010 | 0.015 | −0.017 | 4.60 | 15.9% | 0.146 |
+
+Every P4 correction improved the model: cold-start 0.401 → **0.364**, update
+0.285 → **0.261**. The cold-start margin over carry-forward widened from 19% to
+**27%**. Note `within_30pct` also changed definition in the review (see below), so
+that column is not comparable to the old table.
 
 **The headline changed once the labels were real.** Carry-forward fell from 0.402 to
 **0.497**, because a large share of the old labels were stale copies of the prior value
@@ -522,6 +526,69 @@ show the model is right and Transfermarkt wrong about intrinsic worth — Transf
 value is the only ground truth here, and the test measures convergence toward the model,
 not toward realised fees. The single control for reversion is one lag of Transfermarkt's
 own move; a richer autoregressive control would strengthen the claim further.
+
+---
+
+## ML review — findings and fixes
+
+A full pass over the maths and parameters: scoring functions, target transform,
+conformal calibration, stacking, splits, feature manifest, and the backtest
+specification.
+
+### Critical: every published leaderboard number was stale
+
+The P3 leaderboard was written 2026-08-28 19:11. `gbm.py` (target), `manifest.py`
+(features) and `build.py` (deflator) were all modified 2026-08-30 13:46–13:56. The
+numbers quoted in this file, the model card, the design artifact and the draft posts
+were therefore produced by a configuration that no longer existed. **The leaderboard
+should have been regenerated when the target changed.** Corrected above.
+
+### Bugs found and fixed
+
+| Bug | Effect | Fix |
+|---|---|---|
+| `Stacked` re-instantiated bases as `proto.__class__(proto.variant)` | Silently discarded every tuned hyperparameter — the stacker's bases were always defaults, even in the tuned run | `copy.deepcopy(proto)` |
+| Stale `TRAIN`/`VALID`/`TEST` constants hardcoding 2022 as excluded | P3 repaired that season; anything using `temporal_split` silently dropped a fifth of the panel | Constants and function removed; `rolling_origin` is the protocol |
+| `within_30pct` band was `(0.7, 1.3)` | Asymmetric in log space: counted a 30% under-prediction, forgave a 43% over-prediction | `(1/1.3, 1.3)` |
+| Conformal fell back to in-sample calibration when the slice was small | Would produce intervals that look tight and cover nothing | Raises instead |
+
+### The headline backtest survived a harder test
+
+A **placebo** was constructed: a "model" with zero football knowledge that predicts
+each player's price-stratum mean, so its residual is purely the negative of his
+deviation from that mean — pure mean reversion.
+
+| | β | p |
+|---|---|---|
+| Placebo alone | +0.0765 | 0.032 |
+| Real residual alone | +0.1871 | 2.8e-25 |
+| **Both — real** | **+0.1855** | **7.4e-25** |
+| **Both — placebo** | +0.0355 | 0.30 |
+
+The confound is real on its own, but the two are near-orthogonal (r=0.098): with both
+in the regression the real residual is unchanged and the placebo collapses. **Mean
+reversion is not what drives the finding.** This supersedes the low-momentum subsample
+as the primary robustness check — it is cleaner, since conditioning on low momentum is
+itself conditioning on a function of the noise.
+
+### Caveats now on record
+
+- **Backtest attrition is not random.** 29.5% of rows have no forward value, and they
+  differ systematically: mean price-adjusted residual −0.049 dropped vs +0.021 retained
+  (t=5.83, p=5.9e-09). Players the model marked down disproportionately vanish from
+  coverage. β is conditional on surviving in the market.
+- **The first rolling-origin fold trains on one season** (1,701 rows) and scores 0.536
+  against 0.325 for the last, dragging the mean from 0.356 to 0.401 in the old table.
+  Averaging over unequal training sizes should be stated, not silent.
+- **Conformal predicts from a base fit on 75% of train**, so P4's point predictions come
+  from a weaker model than the leaderboard's. The two are not directly comparable.
+- **`p10`/`p90` are convenience names** for a symmetric fixed-width conformal band, not
+  percentile estimates.
+- **Conformal coverage sits just below nominal** (0.79 vs 0.80) because a temporal split
+  breaks the exchangeability its guarantee assumes.
+
+Clean on inspection: per-90 derivation, NDCG, R², the log/expm1 round-trip, grouped CV,
+and no feature correlating above 0.9 with the target.
 
 ---
 

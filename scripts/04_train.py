@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from src.eval.metrics import score, segment_scores
-from src.eval.splits import rolling_origin, temporal_split
+from src.eval.splits import rolling_origin
 from src.models import baselines as B
 from src.models.gbm import CatBoost, HistGBM, LightGBM, XGBoost
 

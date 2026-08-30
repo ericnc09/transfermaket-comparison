@@ -20,7 +20,7 @@ understates how well the next valuation can be predicted.
 
 - **Algorithm**: LightGBM (`predict()` path, chosen for clean SHAP support) and
   CatBoost (leaderboard best). The two are statistically indistinguishable here
-  — 0.401 vs 0.408 cold-start log MAE against a fold-to-fold sd of ~0.09.
+  — 0.364 vs 0.372 cold-start log MAE against a fold-to-fold sd of ~0.06.
 - **Target**: `log1p(value_eur)`. Predictions are exponentiated back to euros.
 - **Alignment**: features from season *t* predict the Transfermarkt valuation
   published at the start of season *t+1*. Nothing dated on or after the label
@@ -98,13 +98,13 @@ valuations into the past.
 
 | Model | log MAE | log R² | MedAE €m | ±30% | NDCG@100 |
 |---|---|---|---|---|---|
-| CatBoost `[update]` | 0.285 | 0.906 | 1.42 | 61.8% | 0.935 |
-| **CatBoost `[coldstart]`** | **0.401** | 0.813 | 2.01 | 48.4% | 0.883 |
+| CatBoost `[update]` | 0.261 | 0.922 | 1.28 | 66.5% | 0.934 |
+| **CatBoost `[coldstart]`** | **0.364** | 0.853 | 1.79 | 52.6% | 0.894 |
 | *carry forward prior TM value* | *0.497* | *0.641* | *2.33* | *42.4%* | *0.910* |
-| EBM `[coldstart]` | 0.470 | 0.682 | 2.13 | 44.6% | 0.861 |
+| log-linear (age, minutes, G+A) | 0.725 | 0.463 | 3.67 | 25.3% | 0.712 |
 | global median | 1.010 | −0.017 | 4.60 | 15.9% | 0.146 |
 
-**The cold-start model beats carry-forward** (0.401 vs 0.497) — it predicts the
+**The cold-start model beats carry-forward** (0.364 vs 0.497) — it predicts the
 next valuation better than Transfermarkt's own previous valuation does, without
 ever seeing a Transfermarkt value.
 
@@ -184,6 +184,10 @@ follows from that.
   toward the mean: raw residuals run from **+0.360** in the cheapest decile to
   **−0.338** in the dearest. Ranking on raw residuals returns cheap players as
   "undervalued" by construction. The shipped leaderboard is price-stratified.
+- **Backtest attrition is not random.** 29.5% of rows have no forward value, and
+  those rows carry a systematically more negative residual (−0.049 vs +0.021,
+  p=5.9e-09): players the model marks down disproportionately vanish from
+  Transfermarkt's coverage. The β=+0.187 is conditional on surviving in the market.
 - **Survivorship.** The panel only contains players who cleared 600 minutes in a
   Big 5 league. Players who left, were injured, or never broke through are
   absent, so the model is not calibrated for them.
@@ -231,6 +235,7 @@ v.comparables       # five most similar players
 
 | Version | Change |
 |---|---|
+| Review | Leaderboard regenerated (it had gone stale against the P4 fixes). Stacker hyperparameter bug, dead split constants, asymmetric ±30% band, and silent conformal fallback all fixed. Placebo test added. |
 | P5 | Forward backtest: β = +0.187 controlled. €0 forward values excluded. |
 | P4 | Out-of-sample predictions, SHAP, similarity, price-stratified residuals. Deflation dropped (measurably harmful). `Season_End_Year`/`Born` removed as features. |
 | P3 | Labels repaired from Transfermarkt's dated history; panel 5,684 → 8,247 rows. Optuna pass — no material gain. |

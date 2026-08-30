@@ -1,0 +1,62 @@
+{
+  "log_mae":{
+    "CatBoost [coldstart]":0.3636404498,
+    "CatBoost [update]":0.2610070016,
+    "LightGBM [coldstart]":0.3717551155,
+    "LightGBM [update]":0.2705087708,
+    "carry forward prior TM value":0.4969822009,
+    "global median":1.0104731202,
+    "log-linear (age, minutes, G+A)":0.725422748,
+    "median by position x age":0.8831490387
+  },
+  "log_r2":{
+    "CatBoost [coldstart]":0.8529194831,
+    "CatBoost [update]":0.9222796191,
+    "LightGBM [coldstart]":0.8470047869,
+    "LightGBM [update]":0.9166331821,
+    "carry forward prior TM value":0.6414044295,
+    "global median":-0.0165046978,
+    "log-linear (age, minutes, G+A)":0.4627854958,
+    "median by position x age":0.2007605815
+  },
+  "medae_m":{
+    "CatBoost [coldstart]":1.7864793873,
+    "CatBoost [update]":1.2827315993,
+    "LightGBM [coldstart]":1.8881484432,
+    "LightGBM [update]":1.366270174,
+    "carry forward prior TM value":2.325,
+    "global median":4.6,
+    "log-linear (age, minutes, G+A)":3.6721811794,
+    "median by position x age":4.75
+  },
+  "within_30pct":{
+    "CatBoost [coldstart]":0.5256327676,
+    "CatBoost [update]":0.6650739198,
+    "LightGBM [coldstart]":0.5067658917,
+    "LightGBM [update]":0.653180944,
+    "carry forward prior TM value":0.4242250622,
+    "global median":0.1588695958,
+    "log-linear (age, minutes, G+A)":0.2527434961,
+    "median by position x age":0.2063562236
+  },
+  "ndcg_100":{
+    "CatBoost [coldstart]":0.8942059025,
+    "CatBoost [update]":0.9341240172,
+    "LightGBM [coldstart]":0.9046891298,
+    "LightGBM [update]":0.9458739019,
+    "carry forward prior TM value":0.9103980853,
+    "global median":0.1461388904,
+    "log-linear (age, minutes, G+A)":0.712063181,
+    "median by position x age":0.2810439788
+  },
+  "sd":{
+    "CatBoost [coldstart]":0.0592073613,
+    "CatBoost [update]":0.0331693843,
+    "LightGBM [coldstart]":0.0495368289,
+    "LightGBM [update]":0.0405042657,
+    "carry forward prior TM value":0.0505873783,
+    "global median":0.0152537816,
+    "log-linear (age, minutes, G+A)":0.0143598718,
+    "median by position x age":0.0333901811
+  }
+}

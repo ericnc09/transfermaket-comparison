@@ -4,17 +4,10 @@ from __future__ import annotations
 import pandas as pd
 from sklearn.model_selection import GroupKFold
 
-# Season_End_Year. 2022 is excluded: its Transfermarkt label snapshot is a
-# 99.5% copy of 2021, so it cannot be used to score anything.
-TRAIN = [2018, 2019]
-VALID = [2020]
-TEST = [2021]
-
-
-def temporal_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    return (df[df.Season_End_Year.isin(TRAIN)].copy(),
-            df[df.Season_End_Year.isin(VALID)].copy(),
-            df[df.Season_End_Year.isin(TEST)].copy())
+# NOTE: a fixed TRAIN/VALID/TEST split used to live here, hardcoding 2022 as
+# excluded because its label snapshot was stale. P3 repaired that season from
+# the scraped value histories, which left the constants silently dropping a
+# fifth of the panel. `rolling_origin` is the protocol; the constants are gone.
 
 
 def grouped_folds(df: pd.DataFrame, n_splits: int = 5):

@@ -1,6 +1,8 @@
 """Stacked ensemble: a ridge meta-learner over out-of-fold base predictions."""
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 import pandas as pd
 
@@ -33,7 +35,10 @@ class Stacked:
             tr, va = train.iloc[tr_i], train.iloc[va_i]
             rows = [pos[ix] for ix in va.index]
             for j, proto in enumerate(self.bases):
-                m = proto.__class__(proto.variant)
+                # deepcopy, not re-instantiation: `proto.__class__(proto.variant)`
+                # silently dropped every tuned hyperparameter, so the stacker's
+                # bases were always defaults even in a tuned run.
+                m = copy.deepcopy(proto)
                 m.fit(tr, None)
                 oof[rows, j] = _to_target_space(m.predict(va), va)
 
@@ -44,7 +49,7 @@ class Stacked:
         # Refit each base on the full training window for inference.
         self.fitted_ = []
         for proto in self.bases:
-            m = proto.__class__(proto.variant)
+            m = copy.deepcopy(proto)
             m.fit(train, valid)
             self.fitted_.append(m)
         return self

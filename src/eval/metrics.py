@@ -34,7 +34,9 @@ def score(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
         "mae_m": float(np.mean(np.abs(y_pred - y_true)) / 1e6),
         "medae_m": float(np.median(np.abs(y_pred - y_true)) / 1e6),
         "smape": float(smape),
-        "within_30pct": float(np.mean((ratio > 0.7) & (ratio < 1.3))),
+        # Symmetric in log space: 1/1.3 and 1.3, not 0.7 and 1.3. The old band
+        # counted a 30% under-prediction but forgave a 43% over-prediction.
+        "within_30pct": float(np.mean((ratio > 1 / 1.3) & (ratio < 1.3))),
         "spearman": float(sps.spearmanr(y_true, y_pred).statistic),
         "ndcg_100": ndcg_at_k(y_true, y_pred, 100),
     }
