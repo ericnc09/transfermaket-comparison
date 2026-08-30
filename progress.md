@@ -4,7 +4,7 @@ Living record of this project: the plan, every decision and why, and what has
 actually been built. **Updated at the start of every working session and before
 every commit or push.**
 
-Last updated: 2026-08-30 · after P5 (forward backtest)
+Last updated: 2026-08-30 · P5 complete, model card written
 
 ---
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-30 · after P5 (forward backtest)
 | **P2** | First models — baselines + GBM, temporal eval | ✅ Complete |
 | **P3** | Model zoo — full tier list, quantiles, ensemble, tuning | ✅ Complete |
 | **P4** | Explain & compare — SHAP, similarity, residual leaderboard | ✅ Complete |
-| **P5** | Research — forward backtest | ✅ Backtest complete · model card outstanding |
+| **P5** | Research — forward backtest, model card | ✅ Complete |
 
 Full system design: <https://claude.ai/code/artifact/7f2391b1-149f-4f3b-bbf0-37063d6d38dd>
 
@@ -562,10 +562,10 @@ own move; a richer autoregressive control would strengthen the claim further.
    `p3_best_params.json` only once the entire loop finished, so an interrupted run
    threw away hours of completed work. A restart now skips whatever is already on
    disk.
-2. **Model card**, covering the blind spots P4 and P5 surfaced: the cold-start model
-   cannot see off-field events (Greenwood), reputation, or injury; its residuals only
-   mean something within a price stratum; and the backtest measures convergence toward
-   the model, not toward realised fees.
+2. ~~Model card~~ — written: [MODEL_CARD.md](MODEL_CARD.md). Documents intended and
+   out-of-scope use, per-segment performance, and the five blind spots: off-field events,
+   reputation, injury, potential, and transfer context. Every figure in it was verified
+   against the artefacts on disk rather than transcribed.
 3. **Optional — a richer mean-reversion control.** The backtest uses one lag of
    Transfermarkt's own move. An autoregressive control over the full valuation history
    would tighten the causal claim.
