@@ -274,17 +274,31 @@ def add_context(df: pd.DataFrame) -> pd.DataFrame:
         right_on=["comp_name", "_join_season", "squad"], how="left") \
         .drop(columns=["comp_name", "_join_season", "squad"])
 
-    league = (tm.groupby(["comp_name", "season_start_year"])
-                .player_market_value_euro.median().rename("league_median_prior")
-                .reset_index())
-    league["_join_season"] = league.season_start_year + 1
-    df = df.merge(league[["comp_name", "_join_season", "league_median_prior"]],
-                  left_on=["_comp_tm", "Season_End_Year"],
-                  right_on=["comp_name", "_join_season"], how="left") \
-           .drop(columns=["comp_name", "_join_season", "_comp_tm"])
+    # League level: the median PRE-SEASON valuation among players who actually
+    # played in that league that season.
+    #
+    # The obvious deflator - the median of every Transfermarkt entry for the
+    # league - is unusable. Its value depends on how many fringe and youth
+    # players the source happened to list, which varies wildly between
+    # snapshots: Serie A 2018-19 came out at EUR0.8m against EUR1.5-2.4m for
+    # every other Serie A season. That made the deflated target for that one
+    # cell 7.5 where every other cell sat near 2-3, so the model predicted a
+    # normal deflated value, re-inflated by a deflator three times too small,
+    # and marked the entire league down - Ronaldo at EUR11m.
+    #
+    # Restricting to the panel population fixes the composition problem, and
+    # using prior (pre-season) valuations keeps it knowable at prediction time.
+    played = df[(df.minutes >= MIN_MINUTES) & (df.prior_value_eur.notna())]
+    league = (played.groupby(["Comp", "Season_End_Year"])
+                    .prior_value_eur.median().rename("league_median_prior")
+                    .reset_index())
+    df = df.drop(columns=["league_median_prior"], errors="ignore")
+    df = df.merge(league, on=["Comp", "Season_End_Year"], how="left")
+    df["league_median_prior"] = df.league_median_prior.fillna(
+        df.prior_value_eur.median())
 
-    # Deflate by the prior-season median so the model learns quality, not
-    # inflation - and so the deflator is knowable at prediction time.
+    # Deflate by that league level so the model learns quality, not inflation -
+    # and so the deflator is knowable at prediction time.
     df["value_deflated"] = df.value_eur / df.league_median_prior
     df["prior_value_deflated"] = df.prior_value_eur / df.league_median_prior
     df["log_value"] = np.log1p(df.value_eur)

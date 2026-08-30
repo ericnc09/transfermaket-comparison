@@ -4,7 +4,7 @@ Living record of this project: the plan, every decision and why, and what has
 actually been built. **Updated at the start of every working session and before
 every commit or push.**
 
-Last updated: 2026-08-28 · after the Optuna pass (P3 complete)
+Last updated: 2026-08-30 · after P4 (explain & compare)
 
 ---
 
@@ -16,8 +16,8 @@ Last updated: 2026-08-28 · after the Optuna pass (P3 complete)
 | **P1** | Data platform — feature matrix, panel, leakage gates | ✅ Complete |
 | **P2** | First models — baselines + GBM, temporal eval | ✅ Complete |
 | **P3** | Model zoo — full tier list, quantiles, ensemble, tuning | ✅ Complete |
-| **P4** | Explain & compare — SHAP, similarity, residual leaderboard | ⬜ Not started |
-| **P5** | Research — forward backtest, model card, writeup | ⬜ Not started |
+| **P4** | Explain & compare — SHAP, similarity, residual leaderboard | ✅ Complete |
+| **P5** | Research — forward backtest, model card, writeup | ▶ Next |
 
 Full system design: <https://claude.ai/code/artifact/7f2391b1-149f-4f3b-bbf0-37063d6d38dd>
 
@@ -392,6 +392,76 @@ components as expected. `test_stacker_target_space_roundtrip` now pins the conve
 
 ---
 
+## P4 — explain and compare ✅
+
+**Built:** `src/explain/{shap_utils,similarity}.py`, `src/predict.py`,
+`scripts/07_generate_predictions.py`, `scripts/08_residuals.py`.
+
+6,546 out-of-sample predictions — every season scored by a model trained only on
+earlier seasons — with conformal intervals.
+
+| Variant | log MAE | MedAE €m | ±30% | interval coverage |
+|---|---|---|---|---|
+| coldstart | 0.379 | 1.90 | 50.2% | **0.792** |
+| update | 0.277 | 1.40 | 64.6% | **0.797** |
+
+Coverage lands on the nominal 0.80 in both variants.
+
+### The lookup — the original goal, delivered
+
+```python
+from src.predict import search, lookup
+v = lookup("Mason Greenwood", 2022)
+```
+```
+Mason Greenwood  ·  2021-22  ·  Premier League  ·  W  ·  age 20.7  ·  1,271 min
+  model (coldstart) : EUR 41.1m   [EUR 23.6m – EUR 71.6m]
+  transfermarkt     : EUR 5.0m
+  delta             : EUR 36.1m  (723% undervalued by the model)
+```
+
+That case is the clearest illustration of the cold-start model's blind spot:
+Transfermarkt crashed his value for off-field reasons the model cannot see, so it
+values the football alone. Useful to understand, not a trading signal.
+
+### Three defects found and fixed in P4
+
+**Deflation was actively hurting — the design assumption was wrong.** Measured head to
+head: cold-start log MAE **0.374 undeflated against 0.427 deflated**, roughly a standard
+deviation, with lower fold-to-fold variance too. The divisor was a noisy per-row
+quantity the model then had to undo, while league level and inflation were already
+available as ordinary features. The target is now `log1p(value_eur)` directly, which
+also removes an entire class of bug.
+
+That class had already bitten: deflating by the raw median of every Transfermarkt entry
+put Serie A 2018-19 at €0.8m against €1.5–2.4m for the rest, because that snapshot
+listed far more fringe players. The deflated target for that one cell sat at 7.5 where
+every other cell was near 2–3, so the model marked the **entire league** down —
+Ronaldo at €11m. It was caught because the "most overvalued" list came back 15-for-15
+Serie A 2019, which is not a finding, it is a bug.
+
+**`Season_End_Year` and `Born` were features.** Under a temporal split every test season
+is later than anything in training, so a tree can only extrapolate whatever the last
+training season taught it; birth year additionally lets the model recover the season
+index. Both removed. Metric effect was inside noise, but the model is now correct.
+
+**The residual leaderboard was ranking price, not players.** Every regression shrinks
+toward the mean, so raw residuals ran from **+0.360** in the cheapest decile to
+**−0.338** in the dearest, against an overall mean of −0.034. Ranking on them returned
+cheap players as "undervalued" and expensive ones as "overvalued" by construction.
+Residuals are now compared **within Transfermarkt price strata**. Once corrected, the
+systematic disagreements are small: La Liga −0.083, Bundesliga +0.054, DM −0.063,
+ST +0.044.
+
+**And one leak in my own analysis.** A scratch comparison of deflated vs raw targets
+reported R²=0.998 — because a temporary `log_value_raw` column landed on the frame and
+`feature_columns` picked it up as a feature, so the model was predicting the target
+from itself. Caught by the implausibility of the number. The real comparison is above.
+The lesson is that the manifest's `TARGETS` set is what prevents this, and ad-hoc
+columns bypass it.
+
+---
+
 ## Deviations from the original spec
 
 | Original plan | Actual | Why |
@@ -406,6 +476,9 @@ components as expected. `test_stacker_target_space_roundtrip` now pins the conve
 | 5 label-able seasons, 7,077 rows | 4 seasons, 5,684 rows | 2021-22 TM snapshot is a 99.5% copy of 2020-21 |
 | LightGBM as primary GBM | CatBoost + sklearn HistGBM | LightGBM/XGBoost need OpenMP; not installed, and not worth a system change |
 | Squad/league context from current snapshot | Prior-season snapshot | Contemporaneous aggregates contain the player's own label |
+| Deflate the target by league median | **No deflation** — raw `log1p(value_eur)` | Measured worse (0.427 vs 0.374 cold-start) and caused a whole-league failure |
+| Season index available to the model | `Season_End_Year`, `Born` excluded | Under a temporal split the model can only extrapolate a time trend it cannot know |
+| Rank residuals directly | Rank within price strata | Raw residuals encode regression to the mean, not disagreement |
 
 ---
 
@@ -426,8 +499,11 @@ components as expected. `test_stacker_target_space_roundtrip` now pins the conve
    `p3_best_params.json` only once the entire loop finished, so an interrupted run
    threw away hours of completed work. A restart now skips whatever is already on
    disk.
-2. **P4 — explain and compare.** SHAP attributions, the EBM age curve, the kNN
-   comparable-players engine, and the residual leaderboard built on `coldstart`.
-3. **P5 — the forward backtest.** Now genuinely possible: the scraped histories run to
-   2026, so residuals at season *t* can be checked against actual value movement over
-   the following year. This is the study that would carry a writeup.
+2. **P5 — the forward backtest.** The study that would carry a writeup, and the only
+   design in which "we beat Transfermarkt" is a defensible claim rather than a circular
+   one. Take price-adjusted residuals at season *t* and measure the actual Transfermarkt
+   value movement over the following year. The scraped histories run to 2026, so this is
+   now fully supported by the data on disk.
+3. **Model card**, covering the blind spots P4 surfaced: the cold-start model cannot see
+   off-field events (Greenwood), reputation, or injury, and its residuals must be read
+   within a price stratum.

@@ -38,7 +38,7 @@ def test_rolling_origin_never_trains_on_the_future():
         assert set(test.Season_End_Year) == {season}
 
 
-def test_reinflate_inverts_the_deflation(fold):
+def test_reinflate_inverts_the_target_transform(fold):
     """Predicting the target exactly must reproduce the euro value exactly."""
     train, _ = fold
     exact = _reinflate(train[TARGET].to_numpy(), train)

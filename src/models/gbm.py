@@ -1,8 +1,13 @@
-"""Gradient boosting on the deflated log target.
+"""Gradient boosting on the log target.
 
-Target is log1p(value / league_median_prior): deflating by the *prior* season's
-median removes market inflation using a quantity knowable at prediction time.
-Predictions are re-inflated before scoring, so every model is compared in euros.
+Target is log1p(value_eur) directly. Deflating by a league level was tried and
+measurably hurt: cold-start log MAE 0.427 deflated against 0.374 raw, roughly a
+standard deviation, with higher fold-to-fold variance as well. The divisor is a
+noisy per-row quantity the model then has to undo, and league level and market
+inflation are already available to it as ordinary features
+(`league_median_prior`, `squad_value_prior`). Dropping it also removes an entire
+class of bug - a bad deflator in one league-season silently wrecked every
+prediction in that cell.
 """
 from __future__ import annotations
 
@@ -11,11 +16,12 @@ import pandas as pd
 
 from src.features.manifest import CATEGORICAL, feature_columns
 
-TARGET = "log_value_deflated"
+TARGET = "log_value"
 
 
 def _reinflate(pred_log: np.ndarray, df: pd.DataFrame) -> np.ndarray:
-    return np.expm1(pred_log) * df.league_median_prior.to_numpy()
+    """Model space (log euros) back to euros. `df` is kept for interface stability."""
+    return np.expm1(pred_log)
 
 
 class HistGBM:

@@ -9,11 +9,9 @@
     2021,
     2022
   ],
-  "n_features_coldstart": 177,
-  "n_features_update": 180,
+  "n_features_coldstart": 175,
+  "n_features_update": 178,
   "features_coldstart": [
-    "Born",
-    "Season_End_Year",
     "a_minus_xag",
     "a_minus_xag_p90",
     "aerial_win_pct",
@@ -191,8 +189,6 @@
     "years_at_club"
   ],
   "features_update": [
-    "Born",
-    "Season_End_Year",
     "a_minus_xag",
     "a_minus_xag_p90",
     "aerial_win_pct",

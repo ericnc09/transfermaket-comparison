@@ -10,6 +10,13 @@ IDENTIFIERS = {
     "player_height_mtrs", "contract_expiry", "date_joined", "tier", "eligible",
     "season_end_year", "fb_player", "fb_squad", "pos_group", "player_foot",
     "label_is_stale", "season_is_partial", "label_source", "tm_player_id",
+    # Season index must not be a feature: under a temporal split every test
+    # season is later than anything in training, so a tree can only extrapolate
+    # whatever the last training season taught it. Inflation is already handled
+    # by deflating against league_median_prior.
+    "Season_End_Year",
+    # Birth year is age restated, and lets the model recover the season index.
+    "Born",
     "label_date", "prior_date",
 }
 TARGETS = {"value_eur", "log_value", "value_deflated", "log_value_deflated"}

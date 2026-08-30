@@ -172,12 +172,6 @@ def test_context_aggregates_predate_the_label(panel):
         if same is not None and same != prior:
             assert r.squad_value_prior != same
 
-    comp_map = {"Premier League": "Premier League", "La Liga": "LaLiga",
-                "Serie A": "Serie A", "Bundesliga": "Bundesliga", "Ligue 1": "Ligue 1"}
-    for r in panel.sample(100, random_state=1).itertuples():
-        want = league_med.get((comp_map[r.Comp], r.Season_End_Year - 1))
-        assert want == pytest.approx(r.league_median_prior)
-
 
 def test_stale_mirror_seasons_are_excluded(panel):
     """A stale mirror snapshot may not serve as a label.
@@ -225,3 +219,33 @@ def test_partial_seasons_are_excluded(panel):
 def test_all_labels_are_scraped(panel):
     """After the repair every label should come from the dated history."""
     assert (panel.label_source == "scraped").mean() > 0.99
+
+
+def test_league_level_is_stable_across_cells(panel):
+    """League level must not swing wildly between league-seasons.
+
+    Built from the raw median of every Transfermarkt entry it did: Serie A
+    2018-19 came out at EUR0.8m against EUR1.5-2.4m for the rest, because that
+    snapshot listed far more fringe players. It is no longer the model target,
+    but it is still a feature, and a value that jumps threefold on source
+    composition rather than on football is a broken feature.
+    """
+    cell = panel.groupby(["Comp", "Season_End_Year"]).league_median_prior.first()
+    within = cell.groupby(level=0).agg(lambda s: s.max() / s.min())
+    assert (within < 3.0).all(), (
+        f"league level swings more than 3x within a league:\n{within.round(2).to_string()}"
+    )
+
+
+def test_league_level_is_knowable_before_the_label():
+    """league_median_prior must be built from pre-season valuations only.
+
+    It is computed over the full panel, before eligibility is known, so the
+    check has to use the same population rather than the filtered model panel.
+    """
+    full = pd.read_parquet(PROC / "panel_full.parquet")
+    pop = full[(full.minutes >= 600) & (full.prior_value_eur.notna())]
+    want = pop.groupby(["Comp", "Season_End_Year"]).prior_value_eur.median()
+    got = full.groupby(["Comp", "Season_End_Year"]).league_median_prior.first()
+    for key, w in want.items():
+        assert abs(got[key] - w) < 1.0, f"{key}: {got[key]} != {w}"

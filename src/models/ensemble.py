@@ -9,14 +9,13 @@ from src.models.gbm import TARGET, _reinflate
 
 
 def _to_target_space(pred_eur: np.ndarray, df: pd.DataFrame) -> np.ndarray:
-    """Euros -> the deflated log space the meta-learner is trained in.
+    """Euros -> the log space the meta-learner is trained in.
 
-    Without this the stacker mixes units: base predictions arrive as log euros
-    while the meta target is log(value / league_median_prior), so the ridge has
-    to absorb a per-row deflator it cannot see.
+    Base predictions and the meta target must share a space; mixing them once
+    left the ridge absorbing a per-row deflator it could not see, and the
+    stacker scored worse than every one of its components.
     """
-    return np.log1p(np.clip(pred_eur, 1e4, None)
-                    / df.league_median_prior.to_numpy())
+    return np.log1p(np.clip(pred_eur, 1e4, None))
 
 
 class Stacked:
