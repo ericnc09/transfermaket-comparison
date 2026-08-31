@@ -4,7 +4,7 @@ Living record of this project: the plan, every decision and why, and what has
 actually been built. **Updated at the start of every working session and before
 every commit or push.**
 
-Last updated: 2026-08-30 · after an ML review: leaderboard corrected, 3 bugs fixed
+Last updated: 2026-08-30 · review complete; P6 planned and ready to execute
 
 ---
 
@@ -18,6 +18,7 @@ Last updated: 2026-08-30 · after an ML review: leaderboard corrected, 3 bugs fi
 | **P3** | Model zoo — full tier list, quantiles, ensemble, tuning | ✅ Complete |
 | **P4** | Explain & compare — SHAP, similarity, residual leaderboard | ✅ Complete |
 | **P5** | Research — forward backtest, model card | ✅ Complete |
+| **P6** | Extended panel, re-tune, full zoo, fingerprint | ▶ Planned — see [Next](#next--p6-extended-panel-re-tune-full-zoo) |
 
 Full system design: <https://claude.ai/code/artifact/7f2391b1-149f-4f3b-bbf0-37063d6d38dd>
 
@@ -612,30 +613,126 @@ and no feature correlating above 0.9 with the target.
 
 ---
 
-## Next
+## Next — P6: extended panel, re-tune, full zoo
 
-1. **Optuna pass** — running. Trial budgets are weighted per family (`TRIAL_BUDGET`),
-   since cost per fit differs by more than 10× and EBM is both slowest and not the
-   accuracy leader. Measured cost is far higher than estimated: ~19 min for LightGBM
-   but ~50 min for CatBoost per variant, ~5.7 h for the full pass.
+**This is the plan to execute. It is written to be picked up cold in a new session.**
+Read this section, then start at Phase 1.
 
-   Interim CV scores are tightly clustered — cold-start 0.367–0.373, update
-   0.261–0.266, all three families within 0.006 — reinforcing that the families are
-   interchangeable and the data is the binding constraint. These are training-window
-   CV numbers and are **not** comparable to the held-out test-fold figures above; only
-   the rolling-origin re-evaluation settles whether tuning helped.
+### Why this exists
 
-   **Tuning is now checkpointed after every family.** It previously wrote
-   `p3_best_params.json` only once the entire loop finished, so an interrupted run
-   threw away hours of completed work. A restart now skips whatever is already on
-   disk.
-2. ~~Model card~~ — written: [MODEL_CARD.md](MODEL_CARD.md). Documents intended and
-   out-of-scope use, per-segment performance, and the five blind spots: off-field events,
-   reputation, injury, potential, and transfer context. Every figure in it was verified
-   against the artefacts on disk rather than transcribed.
-3. **Optional — a richer mean-reversion control.** The backtest uses one lag of
-   Transfermarkt's own move. An autoregressive control over the full valuation history
-   would tighten the causal claim.
-4. **Optional — realised-fee arbitration.** On transfers with a disclosed fee, compare
-   model error against Transfermarkt error relative to what a club actually paid. Small
-   n and heavy selection bias, so suggestive rather than decisive.
+The ML review found that every published leaderboard number was stale, and fixing that
+surfaced two further problems worth solving properly rather than patching:
+
+- **The tuned hyperparameters are stale too.** `p3_best_params.json` is dated
+  2026-08-28 18:37; `gbm.py` and `manifest.py` changed 2026-08-30. They were optimised
+  against the deflated target with `Season_End_Year`/`Born` as features. **Decision: re-tune.**
+- **The first rolling-origin fold trains on a single season** (1,701 rows) and scores
+  0.536 against 0.325 for the last, dragging the mean from 0.356 to 0.401. **Decision:
+  report every fold, and extend the panel backwards so no fold is that badly trained.**
+
+### The opportunity
+
+The panel starts at Season_End_Year 2018 only because that is when FBref's *advanced*
+tables begin. The basic tables go back much further:
+
+| Table | Seasons available |
+|---|---|
+| FBref standard / shooting / misc / playing_time | **2010 → 2023** |
+| FBref advanced (passing, defense, possession, gca, passing_types) | 2018 → 2023 |
+| Transfermarkt mirror labels (`tm_vals.parquet`) | 2010 → 2022 |
+
+Extending training to Season_End_Year 2012 adds **~10,300 rows** (panel ~18,600), and
+the fold testing 2019 would train on **seven seasons instead of one**.
+
+### Phase 1 — build the extended panel and A/B it (~1 hour)
+
+Do **not** skip to Phase 2. Tuning takes most of a working day and must not run against
+a panel that turns out to be worse.
+
+1. Widen `SEASONS` in `src/features/build.py` from `range(2018, 2024)` to
+   `range(2012, 2024)`. Advanced-table columns will be NaN before 2018; the tree models
+   handle that natively and `feature_columns(..., require_variance=True)` already drops
+   anything degenerate.
+2. Re-run entity resolution over the wider window — the resolver is unchanged and took
+   11 s for six seasons, so this is cheap. Regenerate `data/interim/big5_resolution.parquet`.
+3. `python scripts/03_build_panel.py`. Expect the existing gates to fire on anything
+   unexpected; `stale_label_seasons()` and `partial_seasons()` are data-driven and should
+   still flag only 2022 (mirror labels) and 2023 (partial) respectively.
+4. **A/B head to head**, LightGBM + CatBoost, both variants, on **identical test folds
+   (2019–2022)**: 5-season panel vs extended. Only the training window differs.
+
+**Two risks that must be checked at the decision point, not assumed away:**
+
+- **Missingness as a season proxy.** Advanced features are NaN if and only if the season
+  is pre-2018, and older seasons have systematically lower values. That is precisely the
+  leak `Season_End_Year` was removed to prevent, re-entering through the NaN pattern.
+  Test rows always have full features so the missing branch never fires at inference, but
+  training on mixed completeness can still distort what is learned for complete rows.
+  Check: does per-fold performance on 2019–2022 actually improve, and does SHAP show the
+  model keying on advanced-feature presence?
+- **Mixed label provenance.** 2018+ labels are precisely dated scraped valuations;
+  pre-2018 would be mirror season-start snapshots. Acceptable for training-only seasons,
+  but it is an inconsistency to state, not hide.
+
+**Decision point: keep the extended panel only if it measurably improves held-out
+performance on the common folds.** If it does not, revert `SEASONS` and proceed with the
+five-season panel. Record the outcome here either way.
+
+### Phase 2 — the full run (~7–9 hours, checkpointed)
+
+5. **Re-tune** on the winning panel: `python scripts/06_tune_and_evaluate.py --trials 40`.
+   Per-family budgets live in `TRIAL_BUDGET`. It checkpoints `p3_best_params.json` after
+   every family and resumes, so it can run overnight and survive interruption. Delete the
+   old `p3_best_params.json` first — it is stale and would be silently reused.
+   Expect longer than the previous 5.7 h on a bigger panel.
+6. **Full zoo**: 4 baselines, Ridge/ElasticNet+splines, LightGBM, XGBoost, CatBoost,
+   HistGBM, EBM, and the **full Stacked** (LightGBM + CatBoost + EBM). The stacker now
+   deep-copies its bases, so it finally honours tuned parameters.
+7. **Seed-stability check**: top two models × 3 seeds on one fold, ~2 min. Fold-to-fold
+   sd is 0.05–0.06; if seed variance is comparable, the gaps between families are noise
+   and the write-up must say so instead of ranking them.
+8. **Config fingerprint.** Write git SHA + a hash of the feature list + the target column
+   name into every results JSON, and add a test that fails when a published leaderboard's
+   fingerprint does not match the current code. This is the specific failure that cost us
+   a full set of wrong numbers; make it structurally impossible to repeat.
+
+### After the run — propagate
+
+Numbers appear in four places and **all four go stale together**:
+
+- `progress.md` (this file)
+- `MODEL_CARD.md`
+- the design artifact — <https://claude.ai/code/artifact/7f2391b1-149f-4f3b-bbf0-37063d6d38dd>
+- the write-up pitch, whose draft LinkedIn copy quotes the leaderboard —
+  <https://claude.ai/code/artifact/fa9fc39a-0258-44f1-b25a-9abd506a0872>
+
+**Do not publish anything from the pitch artifact until it is refreshed.** Its current
+copy cites 0.401 vs 0.497; the corrected figures are 0.364 vs 0.497, which makes the
+margin 27% rather than 19% — a stronger claim, not a weaker one.
+
+### Current reference numbers (post-review, current code)
+
+Key rows only. HistGBM, XGBoost, EBM, Ridge and Stacked have **not** been re-run since
+the P4 corrections and must not be quoted until they have been.
+
+| Model | log MAE | ±sd | log R² | MedAE €m | ±30% |
+|---|---|---|---|---|---|
+| CatBoost [update] | 0.261 | 0.033 | 0.922 | 1.28 | 66.5% |
+| CatBoost [coldstart] | 0.364 | 0.059 | 0.853 | 1.79 | 52.6% |
+| *carry forward prior TM value* | *0.497* | *0.051* | *0.641* | *2.33* | *42.4%* |
+
+Regenerate with `python scripts/10_recheck_leaderboard.py`.
+
+---
+
+## Optional, after P6
+
+1. **A richer mean-reversion control.** The backtest uses one lag of Transfermarkt's own
+   move. An autoregressive control over the full valuation history would tighten the
+   causal claim beyond what the placebo test already establishes.
+2. **Realised-fee arbitration.** On transfers with a disclosed fee, compare model error
+   against Transfermarkt error relative to what a club actually paid. The only test with
+   ground truth outside Transfermarkt, and the missing leg for a paper. Small n and heavy
+   selection bias, so suggestive rather than decisive. Fee data is already in the mirror.
+3. **The write-up.** Three angles drafted in the pitch artifact above; recommended
+   sequence is the debugging story on LinkedIn, the market-efficiency piece on Substack.

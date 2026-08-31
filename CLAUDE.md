@@ -6,7 +6,8 @@
 every deviation from the original design and why.
 
 **Read it first.** At the start of any session in this repo, read `progress.md` before
-doing anything else. It is the fastest way to recover full context.
+doing anything else. It is the fastest way to recover full context, and its **Next**
+section is the plan to execute — written to be picked up cold.
 
 **Update it before every commit or push.** No commit lands without `progress.md`
 reflecting the work in it. Specifically, update:
@@ -43,5 +44,11 @@ editing the plan to match what was built.
   interesting model; `update` (with it) is the accurate one. Never quote one alone.
 - **Baselines are not optional.** Last season's TM value carried forward is a brutally
   strong baseline. Every leaderboard reports it.
+- **Regenerate results when the model changes.** A published leaderboard once went stale
+  against a changed target and a changed feature set, and the wrong numbers propagated
+  into four documents. After touching `gbm.py`, `manifest.py` or the feature builder, run
+  `scripts/10_recheck_leaderboard.py` before quoting any number anywhere.
+- **Numbers live in four places and go stale together:** `progress.md`, `MODEL_CARD.md`,
+  the design artifact, and the write-up pitch artifact. Update all four, or none.
 - Data files are build artefacts and stay out of git. `scripts/01_ingest.py` then
   `scripts/03_build_panel.py` regenerates everything in about a minute.
